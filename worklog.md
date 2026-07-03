@@ -610,3 +610,18 @@ Work Log:
 
 Stage Summary:
 - The Scrape Schedule container no longer clips the 6th source row. All 6 scheduled source rows (ahmia-darkweb, darkforum-intel, ransomware.live, bleepingcomputer, nvd-cve, thehackernews) are fully visible with their interval buttons and toggles. Container has overflow:hidden and scrolls internally if content grows beyond the max-height.
+
+---
+Task ID: 18 (bug fix — Severity donut overlapping actor list)
+Agent: main (Z.ai Code)
+Task: Fix the Severity Distribution donut overlapping the last actor list item (BlackAxle).
+
+Work Log:
+- Diagnosed via agent-browser @1280px: actor card bottom=711 but the last <li> (BlackAxle) bottom=810 — the list extended 99px below the card boundary. Severity donut started at 727, so overlap=-83px. Root cause: the radix ScrollArea's max-h-[260px] wasn't respected by the viewport (same pattern as sources/schedule panels), so the 7-item actor list (385px) grew unbounded and spilled out the card bottom, colliding with the severity donut below.
+- First attempt (flex-1 min-h-0 + max-h-[560px] overflow-hidden on card): the card overflow was hidden but the radix ScrollArea viewport still didn't scroll — `overflow-y:auto` on the radix viewport wasn't clipping because max-h was on the parent, not the viewport.
+- Final fix (actor-spotlight.tsx): replaced the radix <ScrollArea> with a plain <div className="min-h-0 flex-1 overflow-y-auto px-4">. The native overflow-y-auto clips reliably at the flex-computed height (298px) and scrolls. Card kept max-h-[560px] + overflow-hidden as the outer bound. Header + "Most active actor" button got shrink-0 so they don't compress. Removed the now-unused ScrollArea import.
+- Verified @1280px: actor card bottom=730, severity donut top=746 → visualGap=16 (no overlap). Actor list scrolls internally (scrollH=384 in clientH=298 viewport, scrolls=true). Visible content ends at 705, well above the card bottom.
+- Lint clean; no runtime errors.
+
+Stage Summary:
+- The Severity Distribution donut no longer overlaps the actor list. The actor list (7 items incl. BlackAxle) now scrolls vertically within its container instead of spilling out the card bottom. Clean 16px gap between the actor card and the severity donut below it.

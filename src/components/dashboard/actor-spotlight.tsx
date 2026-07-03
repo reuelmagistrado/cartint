@@ -5,7 +5,6 @@ import { Skull, TrendingUp, AlertCircle, GitCompareArrows, Check } from "lucide-
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Stats } from "./types";
 
@@ -53,8 +52,8 @@ export function ActorSpotlight({
   const compareCount = compareActors.length;
 
   return (
-    <Card className="flex flex-col border-slate-700/60 bg-slate-900/40">
-      <div className="flex items-center justify-between border-b border-slate-700/60 p-4">
+    <Card className="flex max-h-[560px] min-h-0 flex-col overflow-hidden border-slate-700/60 bg-slate-900/40">
+      <div className="flex shrink-0 items-center justify-between border-b border-slate-700/60 p-4">
         <div>
           <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
             <Skull className="h-4 w-4 text-fuchsia-400" /> Threat Actor Spotlight
@@ -85,7 +84,7 @@ export function ActorSpotlight({
         <button
           type="button"
           onClick={() => onSelectActor?.(top.name)}
-          className="group block w-full border-b border-slate-700/60 bg-gradient-to-r from-fuchsia-950/40 via-slate-900/20 to-transparent p-4 text-left transition-colors hover:from-fuchsia-950/60"
+          className="group block w-full shrink-0 border-b border-slate-700/60 bg-gradient-to-r from-fuchsia-950/40 via-slate-900/20 to-transparent p-4 text-left transition-colors hover:from-fuchsia-950/60"
         >
           <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-fuchsia-300/80">
             <TrendingUp className="h-3 w-3" /> Most active actor
@@ -114,7 +113,7 @@ export function ActorSpotlight({
         </button>
       )}
 
-      <ScrollArea className="max-h-[260px] px-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4" style={{ scrollbarWidth: "thin" }}>
         <TooltipProvider delayDuration={120}>
           <ul className="divide-y divide-slate-800/60">
             {actors.length === 0 && (
@@ -188,7 +187,7 @@ export function ActorSpotlight({
             })}
           </ul>
         </TooltipProvider>
-      </ScrollArea>
+      </div>
     </Card>
   );
 }
