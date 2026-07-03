@@ -645,3 +645,22 @@ Work Log:
 
 Stage Summary:
 - Threat detail modal content now fits entirely within the modal width at all viewport widths. No horizontal scrolling. Description text wraps, InfoRow values truncate, Field values (ATM tactic/technique) wrap, IOC badges wrap. Vertical scroll preserved for long content.
+
+---
+Task ID: 20 (bug fix — threat modal vertical scrollbar missing)
+Agent: main (Z.ai Code)
+Task: Fix threat detail modal: content didn't fit AND no vertical scrollbar to reach hidden content.
+
+Work Log:
+- Diagnosed via agent-browser @1280x800: dialog=680px (max-h-85vh) but content div was 1099px tall — content extended 419px below the dialog. scrollable=false (scrollH=1099 === clientH=1099) because the content div had NO height constraint: the shadcn DialogContent base class is `display:grid` (not flex), so the `flex-1 min-h-0` on the scroll div from the previous round had no effect. The div grew to its full content height (1099px) and overflow-y:auto never triggered.
+- Root cause: grid container doesn't flex-constrain children. The previous round's fix (replacing ScrollArea with a flex div) was correct in principle but failed because the parent wasn't a flex column.
+- Fix (threat-feed.tsx DialogContent):
+  * Added `flex min-h-0 flex-col` to the DialogContent className (overriding the base grid display): `flex max-h-[85vh] min-h-0 flex-col overflow-hidden ...`. Now the dialog is a flex column with a bounded max-height.
+  * Added `shrink-0` to the DialogHeader so it doesn't compress.
+  * The scroll div (`min-h-0 flex-1 overflow-y-auto`) now correctly flexes to fill remaining height and scrolls when content exceeds it.
+- Verified @1280x800: dialog=680px, content div constrained to 556px (after 124px header), inner content=1099px → scrollable=true (scrollH=1099, clientH=556, maxScroll=543). Scrolling to bottom (scrollTop=543) reveals the last section (visible=true). Horizontal overflow count=0.
+- Verified @390x600 (short mobile): dialog=510px, content=338px, scrollable=true (1182px content), horizontalOverflow=0.
+- Lint clean; no runtime errors.
+
+Stage Summary:
+- Threat detail modal now has a working vertical scrollbar. Content that exceeds the modal height (Description, InfoRows, ATM Mapping, IOCs, Related Threats, source footer) is reachable by scrolling. No horizontal overflow. Works at desktop and short mobile viewports.

@@ -85,8 +85,8 @@ export function ThreatDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden border-slate-700 bg-slate-950 p-0">
-        <DialogHeader className="border-b border-slate-800 p-5 pb-4">
+      <DialogContent className="flex max-h-[85vh] min-h-0 flex-col overflow-hidden border-slate-700 bg-slate-950 p-0">
+        <DialogHeader className="shrink-0 border-b border-slate-800 p-5 pb-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="mb-2 flex flex-wrap items-center gap-1.5">
