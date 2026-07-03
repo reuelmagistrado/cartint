@@ -1,0 +1,96 @@
+// CARTINT — Automotive Threat Intelligence Dashboard
+// Prisma schema for dark-web OSINT threat intelligence
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A single threat event scraped from a dark-web / OSINT source.
+// isAutomotive + relevanceScore are the false-positive gate:
+// only items the LLM classifier marks automotive with confidence
+// above the configured threshold are surfaced as real threats.
+model Threat {
+  id            String   @id @default(cuid())
+  externalId    String   @unique // source-native id, used for dedup
+  title         String
+  description   String
+  sourceName    String // e.g. "ransomware.live", "ahmia-darkweb", "bleepingcomputer", "nvd-cve", "darkforum-intel"
+  sourceType    String // "ransomware-api" | "darkweb-search" | "security-rss" | "cve" | "darkforum-intel" | "auto-isac"
+  sourceUrl     String?
+  victimOrg     String?
+  victimSector  String?
+  country       String?
+  attackDate    DateTime?
+  discoveredAt  DateTime @default(now())
+
+  severity String // "critical" | "high" | "medium" | "low"
+
+  // Automotive relevance / false-positive gate
+  isAutomotive        Boolean  @default(false)
+  relevanceScore      Int      @default(0) // 0-100 confidence
+  automotiveCategory  String? // OEM | Tier-1 Supplier | Fleet | Dealership | Aftermarket | Charging | Mobility | Connected Vehicle | Telematics | Logistics
+  atmTactic           String? // Auto-ISAC ATM tactic
+  atmTechnique        String? // Auto-ISAC ATM technique
+  classificationReason String?
+
+  actor      String? // threat actor / ransomware group
+  dataTypes  String? // comma-separated exfiltrated data types
+  verified   Boolean @default(false)
+
+  rawJson String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sourceName, attackDate])
+  @@index([isAutomotive, relevanceScore])
+  @@index([atmTactic])
+  @@index([severity])
+}
+
+// A configured dark-web / OSINT source.
+model Source {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  type        String
+  url         String
+  description String?
+  enabled     Boolean  @default(true)
+  isDarkWeb   Boolean  @default(false)
+  lastFetchAt DateTime?
+  lastStatus  String? // "ok" | "error" | "rate-limited" | "degraded"
+  lastError   String?
+  threatCount Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Audit log of every scrape run — accepted (real automotive threats)
+// vs rejected (false positives filtered by the LLM classifier).
+model ScrapeLog {
+  id         String   @id @default(cuid())
+  sourceName String
+  startedAt  DateTime
+  finishedAt DateTime?
+  status     String
+  fetched    Int @default(0)
+  accepted   Int @default(0)
+  rejected   Int @default(0)
+  error      String?
+}
+
+// Generated CTI (Cyber Threat Intelligence) reports.
+model Report {
+  id          String   @id @default(cuid())
+  title       String
+  summary     String
+  period      String
+  threatIds   String // comma-separated threat ids
+  generatedAt DateTime @default(now())
+  content     String
+}
