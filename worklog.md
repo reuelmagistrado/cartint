@@ -555,3 +555,18 @@ Work Log:
 
 Stage Summary:
 - Both containers now respect their bounds at all viewport widths (320px → 1280px+). Flex items shrink/wrap correctly.
+
+---
+Task ID: 15 (bug fix — ScrollArea horizontal padding overflow)
+Agent: main (Z.ai Code)
+Task: Fix the divide-y div overflowing the Intelligence Sources Card (content flush to border).
+
+Work Log:
+- Root cause: the shadcn Card component has default `py-6` but NO horizontal padding (`px-6` lives only on CardContent/CardHeader/CardFooter). The SourcesPanel, ScrapeSchedulePanel, ActorSpotlight, AuditPanel, ReportGenerator, and GeoDistribution all placed a `<ScrollArea>` directly as a child of `<Card>` (not wrapped in CardContent), so the ScrollArea + its `divide-y` content had 0 horizontal padding — running flush against the card border, looking like it overflowed the card.
+- Fix: added `px-4` to the ScrollArea className in all 6 affected components (sources-panel, scrape-schedule-panel, actor-spotlight, audit-panel, report-generator, geo-distribution), giving the inner content a 16px horizontal gutter that matches the header's `p-4`.
+- Verified at 390px (mobile): Intelligence Sources card leftGap=17, rightGap=17 (was 0/0). Schedule panel leftGap=17, rightGap=17.
+- Verified at 1280px (desktop): both panels leftGap=17, rightGap=17.
+- Lint clean; no runtime errors.
+
+Stage Summary:
+- The divide-y content now sits inside the card with proper horizontal padding on all viewport widths. The content no longer touches/overlaps the card border. Fixed the same latent issue in 5 other panels that used the same ScrollArea-directly-in-Card pattern.

@@ -61,7 +61,7 @@ export function ReportGenerator({ reports, onRefresh }: { reports: Report[]; onR
           {generating ? "Generating…" : "Generate Report"}
         </Button>
       </div>
-      <ScrollArea className="max-h-[260px]">
+      <ScrollArea className="max-h-[260px] px-4">
         <div className="divide-y divide-slate-800/60">
           {reports.length === 0 && (
             <p className="p-4 text-center text-xs text-slate-500">No reports yet. Generate one from the current threat feed.</p>

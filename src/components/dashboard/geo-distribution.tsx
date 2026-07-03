@@ -73,7 +73,7 @@ export function GeoDistribution({ stats }: { stats: Stats | null }) {
         </Badge>
       </div>
 
-      <ScrollArea className="max-h-[280px]">
+      <ScrollArea className="max-h-[280px] px-4">
         <div className="p-3">
           {countries.length === 0 ? (
             <div className="space-y-2">

@@ -68,7 +68,7 @@ export function SourcesPanel({
           Scrape All
         </Button>
       </div>
-      <ScrollArea className="max-h-[420px]">
+      <ScrollArea className="max-h-[420px] px-4">
         <div className="divide-y divide-slate-800/60">
           {sources.map((s, i) => {
             const meta = sourceTypeMeta(s.type);

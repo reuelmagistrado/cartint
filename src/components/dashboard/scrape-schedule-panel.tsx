@@ -94,7 +94,7 @@ export function ScrapeSchedulePanel() {
         </Button>
       </div>
 
-      <ScrollArea className="max-h-[340px]">
+      <ScrollArea className="max-h-[340px] px-4">
         <div className="divide-y divide-slate-800/60">
           {loading && sources.length === 0
             ? Array.from({ length: 6 }).map((_, i) => (

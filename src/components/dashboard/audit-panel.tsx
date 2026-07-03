@@ -26,7 +26,7 @@ export function AuditPanel({ stats }: { stats: Stats | null }) {
           <p className="text-[10px] uppercase tracking-wider text-slate-500">rejection rate</p>
         </div>
       </div>
-      <ScrollArea className="max-h-[280px]">
+      <ScrollArea className="max-h-[280px] px-4">
         <div className="divide-y divide-slate-800/60">
           {logs.length === 0 && (
             <p className="p-4 text-center text-xs text-slate-500">No scrape runs yet. Click “Scrape All” to begin.</p>

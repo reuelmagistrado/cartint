@@ -114,7 +114,7 @@ export function ActorSpotlight({
         </button>
       )}
 
-      <ScrollArea className="max-h-[260px]">
+      <ScrollArea className="max-h-[260px] px-4">
         <TooltipProvider delayDuration={120}>
           <ul className="divide-y divide-slate-800/60">
             {actors.length === 0 && (
