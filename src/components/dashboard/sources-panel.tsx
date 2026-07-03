@@ -48,10 +48,10 @@ export function SourcesPanel({
 
   return (
     <Card className="flex flex-col border-slate-700/60 bg-slate-900/40">
-      <div className="flex items-center justify-between border-b border-slate-700/60 p-4">
-        <div>
+      <div className="flex items-center justify-between gap-3 border-b border-slate-700/60 p-4">
+        <div className="min-w-0 flex-1">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <Radar className="h-4 w-4 text-fuchsia-400" /> Intelligence Sources
+            <Radar className="h-4 w-4 shrink-0 text-fuchsia-400" /> Intelligence Sources
           </h3>
           <p className="text-[11px] text-slate-400">
             {sources.filter((s) => s.isDarkWeb).length} dark-web · {sources.filter((s) => !s.isDarkWeb).length} OSINT
@@ -62,7 +62,7 @@ export function SourcesPanel({
           variant="outline"
           onClick={() => onScrape()}
           disabled={scraping === true}
-          className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200"
+          className="shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${scraping === true ? "animate-spin" : ""}`} />
           Scrape All
@@ -106,8 +106,8 @@ export function SourcesPanel({
                         {meta.label}
                       </Badge>
                       <span className={`flex items-center gap-1 text-[10px] ${statusTone}`}>
-                        <StatusIcon className="h-3 w-3" />
-                        {s.lastStatus ?? "pending"} · {timeAgo(s.lastFetchAt)}
+                        <StatusIcon className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{s.lastStatus ?? "pending"} · {timeAgo(s.lastFetchAt)}</span>
                       </span>
                     </div>
                   </div>

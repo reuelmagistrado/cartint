@@ -539,3 +539,19 @@ Task: Assess project status, QA with agent-browser, fix bugs, add features, impr
   6. Threat trend: add a "predicted threat volume" forecast line (simple moving-average projection)
   7. Add a "recently added threats" live ticker (last 5 threats, auto-updating)
 
+
+---
+Task ID: 14 (bug fix — container overflow)
+Agent: main (Z.ai Code)
+Task: Fix flex-item overflow in the Intelligence Sources and Scrape Schedule containers.
+
+Work Log:
+- Diagnosed via agent-browser at 320px / 390px / 1280px: root cause was flex header rows (`flex items-center justify-between`) where the title `<div>` had no `min-w-0 flex-1`, so long titles couldn't shrink and pushed the action button (Scrape All / Save) past the container's right edge. The Scrape Schedule interval row (`flex items-center gap-2`) was also nowrap, so the 6 preset buttons (Manual/15m/30m/1h/3h/6h) overflowed on narrow widths.
+- Fixed `sources-panel.tsx` header: added `gap-3` + `min-w-0 flex-1` to title div + `shrink-0` to Scrape All button. Also wrapped the status text in a `truncate` span + `shrink-0` on the StatusIcon so long "ok · 5m ago" text truncates instead of overflowing.
+- Fixed `scrape-schedule-panel.tsx` header: same `gap-3` + `min-w-0 flex-1` + `shrink-0` treatment. Fixed the interval row: changed `flex items-center gap-2` → `flex flex-wrap items-center gap-2` so preset buttons wrap to the next line on narrow widths; added `shrink-0` to the RotateCw icon + "Interval" label.
+- Verified at 320px (mobile): sources panel headerRight=304 (vw=320, no overflow), maxRowRight=303 (no overflow); schedule panel headerRight=303, maxRowRight=303 (no overflow).
+- Verified at 1280px (desktop): both panels spRight/sdRight=1264 (vw=1280, no overflow).
+- Lint clean; no runtime errors.
+
+Stage Summary:
+- Both containers now respect their bounds at all viewport widths (320px → 1280px+). Flex items shrink/wrap correctly.

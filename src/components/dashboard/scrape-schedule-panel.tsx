@@ -74,10 +74,10 @@ export function ScrapeSchedulePanel() {
 
   return (
     <Card className="flex flex-col border-slate-700/60 bg-slate-900/40">
-      <div className="flex items-center justify-between border-b border-slate-700/60 p-4">
-        <div>
+      <div className="flex items-center justify-between gap-3 border-b border-slate-700/60 p-4">
+        <div className="min-w-0 flex-1">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <Settings2 className="h-4 w-4 text-emerald-400" /> Scrape Schedule
+            <Settings2 className="h-4 w-4 shrink-0 text-emerald-400" /> Scrape Schedule
           </h3>
           <p className="text-[11px] text-slate-400">
             {enabledCount} enabled · {autoCount} auto-scrape · {sources.length} total
@@ -87,7 +87,7 @@ export function ScrapeSchedulePanel() {
           size="sm"
           onClick={save}
           disabled={!dirty || saving}
-          className={`h-8 ${dirty ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25" : "border-slate-700 text-slate-500"}`}
+          className={`h-8 shrink-0 ${dirty ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25" : "border-slate-700 text-slate-500"}`}
         >
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
           Save
@@ -124,9 +124,9 @@ export function ScrapeSchedulePanel() {
                       onCheckedChange={(v) => updateSource(s.name, { enabled: v })}
                     />
                   </div>
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <RotateCw className="h-3 w-3 shrink-0 text-slate-500" />
-                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Interval</span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider text-slate-500">Interval</span>
                     <div className="flex flex-wrap items-center gap-1">
                       {PRESET_INTERVALS.map((min) => (
                         <button
