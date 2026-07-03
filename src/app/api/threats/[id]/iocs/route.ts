@@ -63,6 +63,18 @@ export async function GET(
     return NextResponse.json({ error: "Threat not found" }, { status: 404 });
   }
 
+  // Serve cached IOCs if already extracted (instant on repeat opens).
+  if (threat.iocs) {
+    try {
+      const cached = JSON.parse(threat.iocs) as IOCs;
+      if (cached && typeof cached === "object" && "cves" in cached) {
+        return NextResponse.json({ iocs: { ...cached, method: cached.method ?? "cached" }, cached: true });
+      }
+    } catch {
+      // corrupt cache — fall through to re-extract
+    }
+  }
+
   const text = `${threat.title}\n${threat.description}\n${threat.dataTypes ?? ""}\n${threat.actor ?? ""}`;
 
   let iocs: IOCs;
@@ -107,7 +119,14 @@ export async function GET(
     }
   }
 
-  return NextResponse.json({ iocs });
+  // Cache the extraction so repeat dialog opens are instant.
+  try {
+    await db.threat.update({ where: { id }, data: { iocs: JSON.stringify(iocs) } });
+  } catch {
+    // non-fatal
+  }
+
+  return NextResponse.json({ iocs, cached: false });
 }
 
 function dedupStrings(arr: unknown): string[] {

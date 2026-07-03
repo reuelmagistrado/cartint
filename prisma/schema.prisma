@@ -43,6 +43,7 @@ model Threat {
   verified   Boolean @default(false)
 
   rawJson String?
+  iocs    String? // cached IOC extraction JSON (populated on first /iocs request)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -66,6 +67,8 @@ model Source {
   lastStatus  String? // "ok" | "error" | "rate-limited" | "degraded"
   lastError   String?
   threatCount Int      @default(0)
+  // Analyst-configured auto-scrape interval in minutes (0 = manual only).
+  scrapeIntervalMin Int @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }

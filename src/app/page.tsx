@@ -33,11 +33,12 @@ import { AtmMatrix } from "@/components/dashboard/atm-matrix";
 import { ThreatFeed, ThreatDetailDialog } from "@/components/dashboard/threat-feed";
 import { AuditPanel } from "@/components/dashboard/audit-panel";
 import { ReportGenerator } from "@/components/dashboard/report-generator";
-import { GeoDistribution } from "@/components/dashboard/geo-distribution";
 import { ActorSpotlight } from "@/components/dashboard/actor-spotlight";
 import { ScrapeHistoryChart } from "@/components/dashboard/scrape-history-chart";
 import { SeverityDonut } from "@/components/dashboard/severity-donut";
 import { ActorProfileDialog } from "@/components/dashboard/actor-profile-dialog";
+import { WorldMap } from "@/components/dashboard/world-map";
+import { ScrapeSchedulePanel } from "@/components/dashboard/scrape-schedule-panel";
 import type { Stats, SourceInfo, AtmTacticData, Threat, Report } from "@/components/dashboard/types";
 
 const PAGE_SIZE = 12;
@@ -450,11 +451,15 @@ export default function Home() {
         {/* Scrape history + false-positive trend */}
         <ScrapeHistoryChart />
 
-        {/* Geographic distribution + Threat actor spotlight (+ severity donut) */}
+        {/* World map (full width) + Threat actor spotlight + severity donut */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <GeoDistribution stats={stats} />
-          <ActorSpotlight stats={stats} onSelectActor={setActorProfile} />
-          <SeverityDonut stats={stats} />
+          <div className="lg:col-span-2">
+            <WorldMap stats={stats} />
+          </div>
+          <div className="space-y-4">
+            <ActorSpotlight stats={stats} onSelectActor={setActorProfile} />
+            <SeverityDonut stats={stats} />
+          </div>
         </div>
 
         {/* Audit + Reports */}
@@ -462,6 +467,9 @@ export default function Home() {
           <AuditPanel stats={stats} />
           <ReportGenerator reports={reports} onRefresh={loadOverview} />
         </div>
+
+        {/* Scrape schedule config */}
+        <ScrapeSchedulePanel />
       </main>
 
       {/* Footer (sticky) */}

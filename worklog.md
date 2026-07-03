@@ -376,3 +376,59 @@ Task: Assess project status, QA with agent-browser, fix bugs, add features, impr
   6. Add a "scrape now" button per source in the sources panel with confirmation + estimated duration
   7. Threat-actor comparison view (compare 2-3 actors side-by-side)
 
+
+---
+Task ID: 11 (cron round 5 — 2026-07-03 14:12)
+Agent: main (Z.ai Code) — webDevReview cron
+Task: Assess project status, QA with agent-browser, fix bugs, add features, improve styling.
+
+## Current project status assessment (start of round)
+- CARTINT v2 stable through round 4. Dev server up (port 3000 → 200), mini-service healthy (uptime 3346s), lint clean, tsc clean for src/.
+- agent-browser QA: LIVE connected, 43 threats, 13 charts, all sections render, threat dialog (IOCs + related) works, no runtime errors.
+- Decision: stable phase → propose new requirements. Focus on next-phase priorities #4 (IOC caching), #2 (world map), #3 (scrape schedule).
+
+## Completed modifications / verification
+
+### Feature 1: IOC caching in DB (eliminates 3-4s LLM delay on repeat opens)
+1. Prisma schema: added `iocs String?` column to Threat (cached IOC extraction JSON) + `scrapeIntervalMin Int @default(0)` to Source. Pushed to DB.
+2. `/api/threats/[id]/iocs` now serves cached IOCs from `threat.iocs` if present (instant, returns `cached: true`); otherwise extracts via LLM/regex, persists the result, and returns `cached: false`. Re-extraction only happens once per threat.
+3. **Verified**: first dialog open → `GET /api/threats/[id]/iocs 200 in 2.1s` (LLM extraction); second open → no new request (served from cache). Repeat opens are now instant.
+
+### Feature 2: World-map choropleth (next-phase #2)
+4. Installed `react-simple-maps@3.0.0`.
+5. **`src/components/dashboard/world-map.tsx`** (NEW): a ComposableMap choropleth using world-atlas TopoJSON from CDN. Maps our country names → ISO numeric codes (44 countries mapped). Color scale: slate (0) → cyan-700 → cyan-600 → amber-500 → rose-500 by threat density. Hover highlights country + shows tooltip with name + count. Loading spinner while TopoJSON fetches. Falls back to a bar list if the geo fetch fails. Below the map: a "Top Countries" badge list. Header shows total threats + country count + a low→high legend.
+6. Replaced `GeoDistribution` (bar chart) with `WorldMap` in page.tsx, given `lg:col-span-2` in a 3-col row (map is larger, actor spotlight + severity donut stack on the right).
+7. **Bug fixed during build**: `react-simple-maps@3.0.0` has NO default export (only named exports) — `import ComposableMap, { ... }` caused a 500 SSR error ("The export default was not found"). Fixed to `import { ComposableMap, Geographies, Geography }`.
+8. **Verified**: 177 country SVG paths render; "Global Threat Distribution" + "TOP COUNTRIES" sections present.
+
+### Feature 3: Scrape-schedule config panel (next-phase #3)
+9. **`/api/sources/config`** (NEW): GET returns each source's `enabled` + `scrapeIntervalMin` + `isDarkWeb`; POST updates them (validated: interval 0-1440 min, 0 = manual only).
+10. **`src/components/dashboard/scrape-schedule-panel.tsx`** (NEW): per-source toggle (shadcn Switch) + interval preset buttons (Manual / 15m / 30m / 1h / 3h / 6h). Header shows enabled/auto-scrape/total counts + a Save button (disabled when clean, emerald when dirty). Dirty state shows an amber "Unsaved changes" banner. Per-source status text ("Disabled — excluded from scrapes" / "Auto-scrapes every N min" / manual). Saves via POST + toast confirmation.
+11. Placed as a full-width section at the bottom of the dashboard (below Audit + Reports).
+12. **Bug fixed during build**: after adding `scrapeIntervalMin` to the schema + `db:push`, the Next.js dev server had a stale Prisma client cache → `/api/sources/config` returned PrismaClientValidationError. Fixed by regenerating the client (`db:generate`) + restarting the dev server. Endpoint now returns all 6 sources correctly.
+13. **Verified**: 6 switches render; toggling a switch shows "Disabled — excluded from scrapes"; setting a 1h interval shows "Auto-scrapes every 1 h"; "Unsaved changes" banner appears.
+
+### Styling improvements (mandatory "improve styling")
+14. **World map**: full choropleth with 5-step heat scale + hover tooltips + legend; 177 country paths with smooth fill transitions.
+15. **Schedule panel**: dark cards with dark-web/OSINT icons per source, emerald active interval buttons, amber dirty banner, per-source status text.
+16. **Layout**: world map given 2/3 width (was a small bar chart), actor spotlight + severity donut stack in the remaining 1/3.
+
+### Verification (agent-browser via Caddy :81)
+- ✅ IOC cache: first open 2.1s (LLM), second open instant (cached). `/api/threats/[id]/iocs` returns 200 with `cached: true/false`.
+- ✅ World map: 177 SVG country paths render; "Global Threat Distribution" + "Top Countries" present.
+- ✅ Schedule panel: 6 switches render; toggle + interval + dirty state all work.
+- ✅ `bun run lint` clean; `tsc --noEmit` clean for src/; no runtime errors.
+
+## Unresolved issues / risks / next-phase recommendations
+- The world map depends on the jsdelivr CDN for the TopoJSON at runtime; if the CDN is unreachable, the component falls back to the bar list. Could bundle the TopoJSON locally for offline reliability.
+- The scrape-schedule intervals are saved to the DB but no background scheduler actually runs them yet — the intervals are currently advisory (analysts see the config; a future cron/worker would honor them). The manual "Refresh Feed" + per-source "Run" buttons remain the active scrape triggers.
+- The dev server needed a restart this round to pick up the new Prisma client field (cached client). If schema changes recur, `db:generate` + dev-server restart is the fix.
+- **Next-phase priorities**:
+  1. Tor-proxy mini-service for live .onion fetches (currently Ahmia clearnet gateway)
+  2. Bundle world-atlas TopoJSON locally (offline reliability)
+  3. Background scheduler that honors `scrapeIntervalMin` (cron/worker mini-service)
+  4. Dev-server health-check + auto-restart mechanism
+  5. Threat-actor comparison view (compare 2-3 actors side-by-side)
+  6. Export CTI reports as PDF
+  7. Add a "scrape now" button per source in the sources panel with estimated duration
+
