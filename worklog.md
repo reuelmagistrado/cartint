@@ -592,3 +592,21 @@ Work Log:
 
 Stage Summary:
 - Intelligence Sources container now matches Threats Over Time height when side-by-side (equal-height grid row). The 6 source items scroll vertically within the fixed-height container instead of overflowing. Container has overflow:hidden. Works correctly at desktop (1280), stacked (1024), and mobile (390).
+
+---
+Task ID: 17 (bug fix — Scrape Schedule 6th row clipping)
+Agent: main (Z.ai Code)
+Task: Fix the Scrape Schedule container clipping the 6th source row (thehackernews).
+
+Work Log:
+- Diagnosed via agent-browser @1280px: card height=484px, 6th row (thehackernews) top=480 bottom=552 → clipped (552 > 484). The ScrollArea's max-h-[340px] wasn't respected by the radix viewport (scrollAreaBottom=900 > cardBottom=832, overflow:visible). Same root pattern as the Intelligence Sources panel.
+- Fix applied to scrape-schedule-panel.tsx (same pattern as the sources-panel fix):
+  * Card: `flex h-full max-h-[560px] min-h-0 flex-col overflow-hidden` — max-h-[560px] accommodates 6 rows (432px) + header (~119px) + dirty banner with room; overflow:hidden prevents spillover.
+  * Header: added `shrink-0` so it doesn't compress.
+  * ScrollArea: `min-h-0 flex-1 px-4` (replaced the broken max-h-[340px]) — fills remaining card height and scrolls via radix viewport if content exceeds.
+- Verified @1280px: cardH=560, all 6 rows fully visible (thehackernews bottom=552 ≤ 560), lastRowClipped=false, cardOverflow=hidden.
+- Verified @390px (mobile): 6th row not clipped, card capped at 560px.
+- Lint clean; no runtime errors.
+
+Stage Summary:
+- The Scrape Schedule container no longer clips the 6th source row. All 6 scheduled source rows (ahmia-darkweb, darkforum-intel, ransomware.live, bleepingcomputer, nvd-cve, thehackernews) are fully visible with their interval buttons and toggles. Container has overflow:hidden and scrolls internally if content grows beyond the max-height.
