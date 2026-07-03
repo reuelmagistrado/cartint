@@ -625,3 +625,23 @@ Work Log:
 
 Stage Summary:
 - The Severity Distribution donut no longer overlaps the actor list. The actor list (7 items incl. BlackAxle) now scrolls vertically within its container instead of spilling out the card bottom. Clean 16px gap between the actor card and the severity donut below it.
+
+---
+Task ID: 19 (bug fix — threat detail modal horizontal overflow)
+Agent: main (Z.ai Code)
+Task: Fix threat detail modal content overflowing the modal width (no horizontal scroll allowed).
+
+Work Log:
+- Diagnosed via agent-browser @1280px: dialog width=512px but inner content=613px (101px overflow). 62 elements extended beyond the dialog's right edge, causing text clipping/truncation across Description, InfoRows, ATM Mapping grid, and IOC badges. Root cause: the radix ScrollArea's max-h-[60vh] viewport didn't constrain width, and the content containers had no min-w-0 / overflow constraint, so wide children (long descriptions, non-truncating Field values, nowrap IOC badges) pushed the layout wider than the dialog. The dialog's overflow:hidden clipped it visually but content was truncated/unreadable.
+- Fix (threat-feed.tsx):
+  * Replaced the radix <ScrollArea className="max-h-[60vh]"> with a plain <div className="min-h-0 flex-1 overflow-y-auto"> — native overflow-y-auto respects the dialog width and only scrolls vertically (no horizontal scroll).
+  * Added min-w-0 to the content wrapper (space-y-4 p-5), both grid containers (grid-cols-2 gap-3 and gap-2), and the Field component — so flex/grid children can shrink and wrap instead of forcing width.
+  * Description <p>: added break-words so long URLs/CVE IDs in descriptions wrap instead of forcing width.
+  * Field component: added min-w-0 + break-words so long ATM technique names (e.g. "Exfiltration to Cloud Storage") wrap instead of overflowing.
+  * Removed the now-unused ScrollArea import.
+- Verified @1280px: dialogW=512, contentW=510, overflowCount=0 (was 62), worstOverflowRight=0. No horizontal scroll.
+- Verified @390px (mobile, full-width modal): overflowCount=0.
+- Lint clean; no runtime errors.
+
+Stage Summary:
+- Threat detail modal content now fits entirely within the modal width at all viewport widths. No horizontal scrolling. Description text wraps, InfoRow values truncate, Field values (ATM tactic/technique) wrap, IOC badges wrap. Vertical scroll preserved for long content.

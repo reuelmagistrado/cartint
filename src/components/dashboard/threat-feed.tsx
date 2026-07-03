@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Threat, RelatedThreat, IOCsResult } from "./types";
 import { SEVERITY_META, sourceTypeMeta, fmtDate } from "./types";
 
@@ -120,14 +119,14 @@ export function ThreatDetailDialog({
           </div>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[60vh]">
-          <div className="space-y-4 p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-w-0 space-y-4 p-5">
             <div>
               <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Description</h4>
-              <p className="text-sm leading-relaxed text-slate-200">{threat.description}</p>
+              <p className="break-words text-sm leading-relaxed text-slate-200">{threat.description}</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="grid min-w-0 grid-cols-2 gap-3 text-xs">
               <InfoRow icon={User} label="Threat Actor" value={threat.actor ?? "Unknown"} />
               <InfoRow icon={User} label="Victim Organization" value={threat.victimOrg ?? "Unknown"} />
               <InfoRow icon={MapPin} label="Country" value={threat.country ?? "Unknown"} />
@@ -151,7 +150,7 @@ export function ThreatDetailDialog({
                     <span className="font-mono text-xs font-bold text-emerald-300">{threat.relevanceScore}/100</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="grid min-w-0 grid-cols-2 gap-2 text-[11px]">
                   <Field label="Category" value={threat.automotiveCategory ?? "—"} />
                   <Field label="ATM Tactic" value={threat.atmTactic ?? "—"} />
                   <Field label="ATM Technique" value={threat.atmTechnique ?? "—"} />
@@ -248,7 +247,7 @@ export function ThreatDetailDialog({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -328,8 +327,8 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label:
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <span className="text-slate-500">{label}:</span>{" "}
+    <div className="min-w-0 break-words">
+      <span className="text-slate-500">{label}: </span>
       <span className="font-medium text-slate-200">{value}</span>
     </div>
   );
