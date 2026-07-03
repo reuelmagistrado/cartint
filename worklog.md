@@ -570,3 +570,25 @@ Work Log:
 
 Stage Summary:
 - The divide-y content now sits inside the card with proper horizontal padding on all viewport widths. The content no longer touches/overlaps the card border. Fixed the same latent issue in 5 other panels that used the same ScrollArea-directly-in-Card pattern.
+
+---
+Task ID: 16 (bug fix — Intelligence Sources height + internal scroll)
+Agent: main (Z.ai Code)
+Task: Make Intelligence Sources container match Threats Over Time height; inner source list scrolls vertically instead of overflowing.
+
+Work Log:
+- Diagnosed via agent-browser @1280px: trend card=347px, sources card=564px (217px taller — sources grew unbounded because the ScrollArea's max-h-[420px] wasn't being respected; the radix viewport had max-height:none). At stacked widths (≤1024px) the sources card grew even more since h-full had no reference height.
+- Root cause: (1) the grid row used default stretch but the trend card had no h-full so it didn't stretch to match; (2) the sources Card had no height constraint, so the ScrollArea expanded to fit all 6 source rows; (3) the ScrollArea's max-h-[420px] was on the wrong element — the radix viewport ignored it.
+- Fix:
+  * page.tsx Trend+Sources grid: added `items-stretch` + `min-h-0` on the sources wrapper div.
+  * trend-chart.tsx: added `h-full` to the Card so it stretches to match the sources card height.
+  * sources-panel.tsx Card: `flex h-full max-h-[460px] min-h-0 flex-col overflow-hidden` — h-full for side-by-side equal-height stretch, max-h-[460px] as a fallback cap for stacked/mobile (so it never grows unbounded), overflow-hidden to prevent visual spillover.
+  * sources-panel.tsx header: added `shrink-0` so the header doesn't compress.
+  * sources-panel.tsx ScrollArea: `min-h-0 flex-1 px-4` (replaced max-h-[420px]) — flex-1 + min-h-0 makes it fill remaining card height and scroll internally via the radix viewport.
+- Verified @1280px (side-by-side): trend card=460, sources card=460, heightDiff=0 (equal), sources list scrollable (693px content in 317px viewport).
+- Verified @1024px (stacked): sources card capped at 460px, scrollable.
+- Verified @390px (mobile): sources card capped at 460px, scrollable.
+- Lint clean; no runtime errors.
+
+Stage Summary:
+- Intelligence Sources container now matches Threats Over Time height when side-by-side (equal-height grid row). The 6 source items scroll vertically within the fixed-height container instead of overflowing. Container has overflow:hidden. Works correctly at desktop (1280), stacked (1024), and mobile (390).

@@ -47,8 +47,8 @@ export function SourcesPanel({
   };
 
   return (
-    <Card className="flex flex-col border-slate-700/60 bg-slate-900/40">
-      <div className="flex items-center justify-between gap-3 border-b border-slate-700/60 p-4">
+    <Card className="flex h-full max-h-[460px] min-h-0 flex-col overflow-hidden border-slate-700/60 bg-slate-900/40">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-700/60 p-4">
         <div className="min-w-0 flex-1">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
             <Radar className="h-4 w-4 shrink-0 text-fuchsia-400" /> Intelligence Sources
@@ -68,7 +68,7 @@ export function SourcesPanel({
           Scrape All
         </Button>
       </div>
-      <ScrollArea className="max-h-[420px] px-4">
+      <ScrollArea className="min-h-0 flex-1 px-4">
         <div className="divide-y divide-slate-800/60">
           {sources.map((s, i) => {
             const meta = sourceTypeMeta(s.type);

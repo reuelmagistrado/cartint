@@ -38,7 +38,7 @@ export function TrendChart({
   const totalInWindow = data.reduce((s, d) => s + d.critical + d.high + d.medium + d.low, 0);
 
   return (
-    <Card className="border-slate-700/60 bg-slate-900/40 p-4">
+    <Card className="h-full border-slate-700/60 bg-slate-900/40 p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-slate-100">Threats Over Time</h3>

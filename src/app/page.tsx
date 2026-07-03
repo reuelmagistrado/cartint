@@ -410,12 +410,12 @@ export default function Home() {
         {/* System status — all services at a glance */}
         <SystemStatusPanel />
 
-        {/* Trend + Sources */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        {/* Trend + Sources — equal height row; sources list scrolls internally */}
+        <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-3">
           <div className="xl:col-span-2">
             <TrendChart stats={stats} trendDays={trendDays} onTrendDaysChange={setTrendDays} />
           </div>
-          <div>
+          <div className="min-h-0">
             <SourcesPanel sources={sources} loading={loading} onScrape={onScrape} scraping={scraping} />
           </div>
         </div>
