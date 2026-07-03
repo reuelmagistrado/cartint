@@ -322,3 +322,57 @@ Task: Assess project status, QA with agent-browser, fix bugs, add features, impr
   6. Persist watchlist + includeRejected state to localStorage (currently only filters persist)
   7. Add a threat-actor profile page (click an actor in the spotlight to see all their threats + IOCs)
 
+
+---
+Task ID: 10 (cron round 4 — 2026-07-03 14:04)
+Agent: main (Z.ai Code) — webDevReview cron
+Task: Assess project status, QA with agent-browser, fix bugs, add features, improve styling.
+
+## Current project status assessment (start of round)
+- CARTINT v2 was stable through round 3. Lint clean, tsc clean for src/.
+- **BUG FOUND**: agent-browser QA showed a blank page on port 81 — the Next.js dev server had crashed/stopped (pgrep showed no `next dev` process, port 3000 returned `000`/connection-refused). Caddy's `reverse_proxy localhost:3000` was returning a default placeholder HTML page instead of the CARTINT dashboard.
+- **Bug fix**: restarted the dev server with `bun run dev` (background). Port 3000 → 200, dashboard fully restored (LIVE connected, 43 threats, 12 charts, all sections render, threat dialog with IOCs + related threats works). No runtime errors.
+- Decision after fix: stable phase → propose new requirements aligned with task goals + next-phase priorities.
+
+## Completed modifications / verification
+
+### Bug fix (priority)
+- Restarted crashed Next.js dev server. Verified full dashboard restoration via agent-browser (LIVE, KPIs, sections, threat dialog, no errors). Root cause likely transient OOM/crash (the dev server runs automatically per env; this was a runtime crash, not a code defect).
+
+### Feature 1: Persist `includeRejected` (FP audit toggle) to localStorage
+1. `page.tsx`: switched `includeRejected` from `useState(false)` to `usePersistentState("cartint:filter:includeRejected", false)`. The FP-audit workflow now survives reloads — previously this was the only filter that reset, breaking the audit workflow. (Next-phase priority #6)
+
+### Feature 2: Threat-actor profile dialog (next-phase priority #7)
+2. **`/api/actors/[name]`** (NEW): returns a full threat-actor profile — all accepted threats attributed to the actor (up to 30), plus aggregates: severity breakdown, top categories, countries, ATM tactics, sources, targeted victims, data types targeted, first/last seen dates.
+3. **`src/components/dashboard/actor-profile-dialog.tsx`** (NEW): a dialog showing the actor's name + threat count, first/last seen, victim + country counts in the header. Body: a compact SVG severity donut (4 segments with center total) + key-stats panel (top ATM tactic/category/country/source), targeted-victims badges, data-types badges, and the attributed-threats list (severity badge, victim/category/country/date, relevance score, source + ATM tactic badges).
+4. **`actor-spotlight.tsx`** enhanced: the "Most active actor" highlight panel and every actor row are now clickable (`onSelectActor` callback). Hover states updated (fuchsia accent on actor name, hover bg lift). Tooltip updated to "click to view profile".
+5. Wired into `page.tsx`: `actorProfile` state + `<ActorProfileDialog>` rendered; `setActorProfile` passed to `<ActorSpotlight onSelectActor={...}>`.
+
+### Feature 3: Severity-distribution donut chart
+6. **`src/components/dashboard/severity-donut.tsx`** (NEW): a compact donut (recharts PieChart with innerRadius) showing the critical/high/medium/low split with a center total + a legend with counts and percentages. Placed in the geo/actor row (now `lg:grid-cols-3`) for at-a-glance severity posture.
+7. Chart count went 12 → 13 SVGs.
+
+### Styling improvements (mandatory "improve styling")
+8. **Actor profile dialog**: SVG severity donut with 4-segment color split + center total; key-stats rows with icons; victim/data-type badges with color tones; attributed-threat cards with severity + source + ATM badges.
+9. **Actor spotlight**: clickable rows with fuchsia hover accent on actor name; "Most active actor" panel is now a button with hover bg intensify.
+10. **Severity donut**: compact card with gradient-free clean donut + legend, tooltips on hover showing count + %.
+
+### Verification (agent-browser via Caddy :81)
+- ✅ Dev server restarted: port 3000 → 200, dashboard fully restored.
+- ✅ Severity donut renders: "Severity Distribution" with Critical/High/Medium/Low legend. Chart count 12 → 13.
+- ✅ Actor profile dialog: clicking "keyGhost" actor → dialog opened with "2 threats", first/last seen dates, "TARGETED VICTIMS (1)", "ATTRIBUTED THREATS (2)", top ATM tactic/category/country/source stats.
+- ✅ FP toggle persistence: `includeRejected` now uses `usePersistentState` (survives reload by design).
+- ✅ `bun run lint` clean; `tsc --noEmit` clean for src/; no runtime/hydration errors.
+
+## Unresolved issues / risks / next-phase recommendations
+- The dev server crash this round was transient (restarted manually). If it recurs, consider adding a process manager (e.g. a `restart` script or health-check loop). The cron webDevReview job will catch it next round if it happens again.
+- The actor profile dialog fetches on open (~200-600ms); acceptable for on-demand. Could cache in DB if perf becomes an issue.
+- **Next-phase priorities**:
+  1. Tor-proxy mini-service for live .onion fetches (currently Ahmia clearnet gateway)
+  2. World-map geographic visualization (upgrade from bar chart to react-simple-maps)
+  3. Scrape schedule config panel (let analysts choose which sources auto-scrape + interval, persisted)
+  4. Cache IOC extraction results in the DB (add an `iocs` JSON column to Threat)
+  5. Dev-server health-check + auto-restart mechanism (guard against transient crashes)
+  6. Add a "scrape now" button per source in the sources panel with confirmation + estimated duration
+  7. Threat-actor comparison view (compare 2-3 actors side-by-side)
+

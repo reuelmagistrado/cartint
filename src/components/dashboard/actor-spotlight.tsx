@@ -32,7 +32,7 @@ function actorTier(count: number): { label: string; tone: string; bar: string; d
   };
 }
 
-export function ActorSpotlight({ stats }: { stats: Stats | null }) {
+export function ActorSpotlight({ stats, onSelectActor }: { stats: Stats | null; onSelectActor?: (actor: string) => void }) {
   const actors = (stats?.byActor ?? []).filter((a) => a.name && a.name.toLowerCase() !== "unknown");
   const max = actors.reduce((m, a) => Math.max(m, a.count), 0);
   const total = actors.reduce((s, a) => s + a.count, 0);
@@ -56,13 +56,17 @@ export function ActorSpotlight({ stats }: { stats: Stats | null }) {
 
       {/* Most active actor highlight */}
       {top && (
-        <div className="border-b border-slate-700/60 bg-gradient-to-r from-fuchsia-950/40 via-slate-900/20 to-transparent p-4">
+        <button
+          type="button"
+          onClick={() => onSelectActor?.(top.name)}
+          className="group block w-full border-b border-slate-700/60 bg-gradient-to-r from-fuchsia-950/40 via-slate-900/20 to-transparent p-4 text-left transition-colors hover:from-fuchsia-950/60"
+        >
           <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-fuchsia-300/80">
             <TrendingUp className="h-3 w-3" /> Most active actor
           </div>
           <div className="mt-1.5 flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="truncate font-mono text-base font-bold text-fuchsia-200">{top.name}</p>
+              <p className="truncate font-mono text-base font-bold text-fuchsia-200 group-hover:text-fuchsia-100">{top.name}</p>
               <p className="text-[11px] text-slate-400">
                 {top.count} automotive threat{top.count === 1 ? "" : "s"} ·{" "}
                 {total > 0 ? Math.round((top.count / total) * 100) : 0}% of attributed
@@ -81,7 +85,7 @@ export function ActorSpotlight({ stats }: { stats: Stats | null }) {
               ))}
             </div>
           </div>
-        </div>
+        </button>
       )}
 
       <ScrollArea className="max-h-[260px]">
@@ -102,12 +106,13 @@ export function ActorSpotlight({ stats }: { stats: Stats | null }) {
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: Math.min(i * 0.03, 0.3) }}
-                  className="group p-3 transition-colors hover:bg-slate-800/30"
+                  onClick={() => onSelectActor?.(a.name)}
+                  className="group cursor-pointer p-3 transition-colors hover:bg-slate-800/40"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className={`h-2 w-2 shrink-0 rounded-full ${tier.dot}`} />
-                      <span className="truncate font-mono text-xs font-semibold text-slate-100">{a.name}</span>
+                      <span className="truncate font-mono text-xs font-semibold text-slate-100 group-hover:text-fuchsia-200">{a.name}</span>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <Badge variant="outline" className={`h-4 border px-1.5 text-[9px] ${tier.tone}`}>
@@ -118,7 +123,7 @@ export function ActorSpotlight({ stats }: { stats: Stats | null }) {
                           <span className="font-mono text-sm font-bold text-slate-200">{a.count}</span>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="border-slate-700 bg-slate-900 text-xs">
-                          {a.count} attributed threat{a.count === 1 ? "" : "s"}
+                          {a.count} attributed threat{a.count === 1 ? "" : "s"} · click to view profile
                         </TooltipContent>
                       </Tooltip>
                     </div>

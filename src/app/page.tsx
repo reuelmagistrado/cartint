@@ -36,6 +36,8 @@ import { ReportGenerator } from "@/components/dashboard/report-generator";
 import { GeoDistribution } from "@/components/dashboard/geo-distribution";
 import { ActorSpotlight } from "@/components/dashboard/actor-spotlight";
 import { ScrapeHistoryChart } from "@/components/dashboard/scrape-history-chart";
+import { SeverityDonut } from "@/components/dashboard/severity-donut";
+import { ActorProfileDialog } from "@/components/dashboard/actor-profile-dialog";
 import type { Stats, SourceInfo, AtmTacticData, Threat, Report } from "@/components/dashboard/types";
 
 const PAGE_SIZE = 12;
@@ -64,10 +66,11 @@ export default function Home() {
   const [fCategory, setFCategory] = usePersistentState("cartint:filter:category", "all");
   const [fTactic, setFTactic] = usePersistentState("cartint:filter:tactic", "all");
   const [fCountry, setFCountry] = usePersistentState("cartint:filter:country", "all");
-  const [includeRejected, setIncludeRejected] = useState(false);
+  const [includeRejected, setIncludeRejected] = usePersistentState("cartint:filter:includeRejected", false);
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [trendDays, setTrendDays] = usePersistentState("cartint:filter:trendDays", 14);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [actorProfile, setActorProfile] = useState<string | null>(null);
   const watchlist = useWatchlist();
   const stream = useThreatStream();
 
@@ -447,10 +450,11 @@ export default function Home() {
         {/* Scrape history + false-positive trend */}
         <ScrapeHistoryChart />
 
-        {/* Geographic distribution + Threat actor spotlight */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Geographic distribution + Threat actor spotlight (+ severity donut) */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <GeoDistribution stats={stats} />
-          <ActorSpotlight stats={stats} />
+          <ActorSpotlight stats={stats} onSelectActor={setActorProfile} />
+          <SeverityDonut stats={stats} />
         </div>
 
         {/* Audit + Reports */}
@@ -494,6 +498,12 @@ export default function Home() {
           setSelected(t);
           // keep dialog open; the related-threats effect re-fetches for the new threat
         }}
+      />
+
+      <ActorProfileDialog
+        actor={actorProfile}
+        open={!!actorProfile}
+        onOpenChange={(v) => !v && setActorProfile(null)}
       />
 
       {/* Keyboard shortcuts help */}
