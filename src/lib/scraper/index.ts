@@ -161,5 +161,34 @@ export async function scrapeAll(): Promise<ScrapeResult[]> {
       });
     }
   }
+  // Notify the WebSocket mini-service so connected dashboards refresh live.
+  notifyThreatStream({ results, source: undefined }).catch(() => {});
   return results;
+}
+
+// Fire-and-forget notification to the threat-feed WebSocket mini-service
+// (port 3003). Failures are swallowed — real-time updates are best-effort.
+export async function notifyThreatStream(payload: {
+  source?: string;
+  results: ScrapeResult[];
+}) {
+  const totalAccepted = payload.results.reduce((s, r) => s + (r.accepted || 0), 0);
+  const totalRejected = payload.results.reduce((s, r) => s + (r.rejected || 0), 0);
+  if (totalAccepted === 0 && totalRejected === 0) return;
+  try {
+    await fetch("http://localhost:3003/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: payload.source,
+        results: payload.results,
+        totalAccepted,
+        totalRejected,
+        timestamp: new Date().toISOString(),
+      }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch {
+    // Mini-service may be down; non-fatal.
+  }
 }

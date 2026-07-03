@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download, Star } from "lucide-react";
+import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download, Star, Link2, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,18 +13,46 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { Threat } from "./types";
+import type { Threat, RelatedThreat } from "./types";
 import { SEVERITY_META, sourceTypeMeta, fmtDate } from "./types";
 
 export function ThreatDetailDialog({
   threat,
   open,
   onOpenChange,
+  onSelectRelated,
 }: {
   threat: Threat | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  onSelectRelated?: (t: Threat) => void;
 }) {
+  const [related, setRelated] = useState<RelatedThreat[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+
+  useEffect(() => {
+    if (!threat || !open) {
+      queueMicrotask(() => setRelated([]));
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => setRelatedLoading(true));
+    fetch(`/api/threats/${threat.id}/related`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled) setRelated(json.items ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setRelated([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRelatedLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threat, open]);
+
   if (!threat) return null;
   const sev = SEVERITY_META[threat.severity];
   const srcMeta = sourceTypeMeta(threat.sourceType);
@@ -120,6 +148,48 @@ export function ThreatDetailDialog({
                 </Button>
               )}
             </div>
+
+            {related.length > 0 && (
+              <div>
+                <h4 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  <Link2 className="h-3.5 w-3.5 text-emerald-400" /> Related Threats
+                  <span className="font-mono text-slate-500">({related.length})</span>
+                </h4>
+                <div className="space-y-1.5">
+                  {related.map((r) => {
+                    const rSev = SEVERITY_META[r.severity as keyof typeof SEVERITY_META];
+                    return (
+                      <button
+                        key={r.id}
+                        onClick={() => onSelectRelated?.(r as unknown as Threat)}
+                        className="group flex w-full items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/40 p-2 text-left transition-colors hover:border-emerald-500/40 hover:bg-slate-800/50"
+                      >
+                        <span className={`inline-flex h-5 shrink-0 items-center rounded border px-1 text-[9px] font-bold uppercase ${rSev.bg} ${rSev.border} ${rSev.text}`}>
+                          {rSev.label}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[11px] font-medium text-slate-200 group-hover:text-emerald-200">{r.title}</p>
+                          <p className="truncate text-[10px] text-slate-500">
+                            {r.actor ?? "—"} · {r.automotiveCategory ?? "—"}{r.country ? ` · ${r.country}` : ""}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {r.reasons.slice(0, 2).map((reason) => (
+                            <span key={reason} className="rounded bg-emerald-500/10 px-1 py-0.5 text-[9px] text-emerald-300">{reason}</span>
+                          ))}
+                          <ChevronRight className="h-3 w-3 text-slate-600 group-hover:text-emerald-400" />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {relatedLoading && (
+              <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                <Loader2 className="h-3 w-3 animate-spin" /> Loading related threats…
+              </div>
+            )}
           </div>
         </ScrollArea>
       </DialogContent>

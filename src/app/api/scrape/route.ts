@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSourcesSeeded } from "@/lib/scraper";
-import { scrapeAll, scrapeSource } from "@/lib/scraper";
+import { ensureSourcesSeeded, scrapeAll, scrapeSource, notifyThreatStream } from "@/lib/scraper";
 import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +14,11 @@ export async function POST(req: NextRequest) {
     const source = typeof body?.source === "string" ? body.source : undefined;
 
     const results = source ? [await scrapeSource(source)] : await scrapeAll();
+    // For single-source scrapes, notify the WS service here (scrapeAll already
+    // notifies itself). Best-effort, non-blocking.
+    if (source) {
+      notifyThreatStream({ results, source }).catch(() => {});
+    }
     return NextResponse.json({ ok: true, results });
   } catch (e) {
     return NextResponse.json(

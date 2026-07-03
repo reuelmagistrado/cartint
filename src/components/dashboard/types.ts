@@ -100,6 +100,22 @@ export type Report = {
   content: string;
 };
 
+// Related threat (lighter shape returned by /api/threats/[id]/related).
+export type RelatedThreat = {
+  id: string;
+  title: string;
+  severity: Severity;
+  sourceName: string;
+  automotiveCategory: string | null;
+  atmTactic: string | null;
+  actor: string | null;
+  country: string | null;
+  attackDate: string | null;
+  relevanceScore: number;
+  matchScore: number;
+  reasons: string[];
+};
+
 export const SEVERITY_META: Record<
   Severity,
   { label: string; text: string; bg: string; border: string; dot: string; hex: string }

@@ -198,3 +198,71 @@ Task: Assess project status, QA with agent-browser, fix bugs, add features, impr
   6. Geographic heatmap: upgrade from bar chart to a real world-map visualization (e.g. react-simple-maps)
   7. Add a "scrape schedule" config panel (let analysts choose which sources auto-scrape and at what interval)
 
+
+---
+Task ID: 8 (cron round 2 — 2026-07-03 13:14)
+Agent: main (Z.ai Code) — webDevReview cron
+Task: Assess project status, QA with agent-browser, fix bugs, add features, improve styling.
+
+## Current project status assessment (start of round)
+- CARTINT v2 stable and verified through round 1. Dev server up, all APIs 200.
+- Baseline: `bun run lint` clean; `tsc --noEmit` clean for src/.
+- agent-browser QA: page loads, 43 active threats, 46% FP rejection rate, 8 charts, watchlist working, footer pinned. No bugs found.
+- Decision: stable phase → propose new requirements. Focus on the #2 next-phase priority (WebSocket live-push) + enrichments.
+
+## Completed modifications / verification
+
+### Headline feature: Real-time WebSocket live-push (mini-service)
+1. **`mini-services/threat-feed-service/`** (NEW — independent bun project, port 3003, `bun --hot`):
+   - `index.ts`: socket.io server with `/notify` (internal POST from Next.js scrape API) + `/health` (GET) HTTP routes on the SAME server.
+   - **Key fix**: socket.io uses the DEFAULT engine path (`/socket.io/`) instead of `path: "/"`. With `path: "/"`, engine.io intercepted ALL HTTP routes (including /notify and /health), returning `{"code":0,"message":"Transport unknown"}`. Using the default path lets /notify and /health work on the same port. Caddy forwards based on the XTransformPort query param, so the client still connects with `io("/?XTransformPort=3003")`.
+   - Broadcasts `threats:new` events with per-source results + totals to all connected clients.
+   - Started in background; verified healthy (uptime 760s+, /health returns JSON, /notify broadcasts).
+
+2. **`src/hooks/use-threat-stream.ts`** (NEW): `useThreatStream()` hook using socket.io-client. Exposes `state` (connecting/connected/disconnected), `lastEvent`, `events`, `enabled` toggle. All setState calls happen in socket event handlers / queueMicrotask (not synchronously in effect body) — correct React 19 pattern. **Transport: polling-only** — the websocket upgrade through Caddy stalled and left the socket in "connecting" limbo; polling is plain HTTP and routes reliably through Caddy's XTransformPort forwarding. Latency is negligible for infrequent scrape notifications.
+
+3. **Scrape → WS notify wiring** (`src/lib/scraper/index.ts` + `src/app/api/scrape/route.ts`):
+   - New `notifyThreatStream()` fire-and-forget function POSTs to `http://localhost:3003/notify` with per-source results + totals. 3s timeout, errors swallowed (best-effort).
+   - `scrapeAll()` notifies after all sources complete; single-source scrapes notify from the `/api/scrape` route.
+
+4. **Dashboard live integration** (`src/app/page.tsx`):
+   - LIVE indicator in header now reflects real WS state: green "LIVE" (connected) / amber "SYNC" (connecting) / red "OFFLINE" (disconnected), with tooltip.
+   - Effect watches `stream.lastEvent`: on a `threats:new` event with `totalAccepted > 0`, shows a "🔴 N new automotive threats" toast (with source + FP-rejected count) AND auto-refreshes both the overview and the threat feed. Dedupes by timestamp.
+
+### New features (enrichments)
+5. **Related Threats** in the threat detail dialog (`src/components/dashboard/threat-feed.tsx` + new API `src/app/api/threats/[id]/related/route.ts`):
+   - New endpoint returns up to 8 related threats (same actor ×3, same category ×2, same ATM tactic ×2, same country ×1, same source ×1 — weighted match score) excluding the current threat.
+   - Dialog fetches related threats on open; renders a "Related Threats" section with severity badge, title, actor/category/country, and match-reason chips ("same actor", "same category", etc.). Clicking a related threat swaps the dialog to it (stays open, re-fetches related).
+   - `RelatedThreat` type added to `types.ts`.
+
+6. **localStorage filter persistence** (`src/hooks/use-persistent-state.ts` — NEW): `usePersistentState(key, default)` hook. Applied to source/severity/category/tactic/country/search/trendDays filters — preferences now survive page reloads. SSR-safe (reads in a deferred microtask to avoid hydration mismatch + the react-hooks/set-state-in-effect warning).
+
+### Styling improvements (mandatory "improve styling")
+7. **KPI sparklines** (`src/components/dashboard/kpi-cards.tsx`): each KPI card now shows a mini inline SVG sparkline (pure SVG, no recharts overhead) — total/critical/high severity trends over the selected window, with gradient area + line + endpoint dot in the card's accent color. 3 cards with trend data render sparklines; the % / coverage cards stay clean.
+8. **LIVE indicator**: tri-state colored dot (green/amber/red) with ping animation only when connected, plus LIVE/SYNC/OFFLINE label and tooltip.
+9. **Related-threat chips**: emerald match-reason badges on each related row.
+
+### Verification (agent-browser via Caddy port 81)
+- ✅ Mini-service: `/health` returns `{"ok":true,"clients":3,"uptime":763}`; `/notify` broadcasts to N clients.
+- ✅ **LIVE indicator**: shows "LIVE" (connected) when accessed through Caddy (:81). [Note: accessing via :3000 directly bypasses Caddy so /socket.io/ hits Next.js 404 — the dashboard must be viewed through the preview/Caddy gateway, which is the normal user path.]
+- ✅ **Live toast**: manual `curl POST /notify` → toast "🔴 3 new automotive threats" appeared in the dashboard within ~2s + feed auto-refreshed.
+- ✅ **Sparklines**: 9 KPI SVGs render (3 sparklines + other card SVGs).
+- ✅ **Related Threats**: dialog shows "RELATED THREATS" with "same ATM tactic", "same source", "same country", "same category" match reasons.
+- ✅ **Filter persistence**: filters use `usePersistentState` (verified via code; survives reload by design).
+- ✅ `bun run lint` clean; `tsc --noEmit` clean for src/; no runtime/hydration errors.
+
+### Important operational note
+- The WebSocket mini-service MUST be running for live features. Start with: `cd mini-services/threat-feed-service && bun run dev` (already running in background this session). It auto-restarts on file changes via `bun --hot`.
+- The dashboard's socket.io connection only works when the page is served through the Caddy gateway (port 81), NOT when accessed directly on port 3000 — because /socket.io/ requests must be forwarded to port 3003 via the XTransformPort query param. The preview panel uses Caddy, so the normal user experience is correct.
+
+## Unresolved issues / risks / next-phase recommendations
+- socket.io uses polling-only transport (websocket upgrade through Caddy stalled). Acceptable for infrequent scrape notifications. Could investigate Caddy websocket forwarding config to enable ws transport for lower latency.
+- The `page_reader` 504 timeouts from Ahmia (dark-web search) are external/transient and already handled by try/catch in the source adapter — non-fatal.
+- **Next-phase priorities**:
+  1. Tor-proxy mini-service for live .onion fetches (currently Ahmia clearnet gateway)
+  2. World-map geographic visualization (upgrade from bar chart to react-simple-maps)
+  3. Scrape schedule config panel (let analysts choose which sources auto-scrape + interval, persisted)
+  4. Threat detail dialog: add an "Indicators of Compromise (IOCs)" section (extracted from description via LLM)
+  5. Add a "scrape history" timeline chart (accepted vs rejected per scrape run over time)
+  6. Persist watchlist + includeRejected state to localStorage (currently only filters persist)
+

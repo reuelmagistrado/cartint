@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ShieldAlert,
@@ -23,6 +23,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useToast } from "@/hooks/use-toast";
 import { useKeyboardShortcuts, SHORTCUT_HELP } from "@/hooks/use-keyboard-shortcuts";
 import { useWatchlist } from "@/hooks/use-watchlist";
+import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useThreatStream, type ThreatStreamEvent } from "@/hooks/use-threat-stream";
 import { KpiCards } from "@/components/dashboard/kpi-cards";
 import { TrendChart } from "@/components/dashboard/trend-chart";
 import { BreakdownCharts } from "@/components/dashboard/breakdown-charts";
@@ -53,19 +55,20 @@ export default function Home() {
   const [selected, setSelected] = useState<Threat | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
-  // Feed filter state
-  const [search, setSearch] = useState("");
+  // Feed filter state — persisted to localStorage so preferences survive reloads.
+  const [search, setSearch] = usePersistentState("cartint:filter:search", "");
   const [page, setPage] = useState(0);
-  const [fSource, setFSource] = useState("all");
-  const [fSeverity, setFSeverity] = useState("all");
-  const [fCategory, setFCategory] = useState("all");
-  const [fTactic, setFTactic] = useState("all");
-  const [fCountry, setFCountry] = useState("all");
+  const [fSource, setFSource] = usePersistentState("cartint:filter:source", "all");
+  const [fSeverity, setFSeverity] = usePersistentState("cartint:filter:severity", "all");
+  const [fCategory, setFCategory] = usePersistentState("cartint:filter:category", "all");
+  const [fTactic, setFTactic] = usePersistentState("cartint:filter:tactic", "all");
+  const [fCountry, setFCountry] = usePersistentState("cartint:filter:country", "all");
   const [includeRejected, setIncludeRejected] = useState(false);
   const [watchlistOnly, setWatchlistOnly] = useState(false);
-  const [trendDays, setTrendDays] = useState(14);
+  const [trendDays, setTrendDays] = usePersistentState("cartint:filter:trendDays", 14);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const watchlist = useWatchlist();
+  const stream = useThreatStream();
 
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState<boolean | string>(false);
@@ -130,6 +133,28 @@ export default function Home() {
     const t = setInterval(loadOverview, 60000);
     return () => clearInterval(t);
   }, [loadOverview]);
+
+  // Live-stream: when the WebSocket mini-service broadcasts a "threats:new"
+  // event (a scrape just completed), show a toast + auto-refresh the feed.
+  const lastEventRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!stream.lastEvent) return;
+    const ev = stream.lastEvent as ThreatStreamEvent;
+    // Dedupe by timestamp so the same event doesn't fire twice.
+    if (lastEventRef.current === ev.timestamp) return;
+    lastEventRef.current = ev.timestamp;
+    if (ev.totalAccepted > 0) {
+      toast({
+        title: `🔴 ${ev.totalAccepted} new automotive threat${ev.totalAccepted > 1 ? "s" : ""}`,
+        description: ev.source
+          ? `From ${ev.source} · ${ev.totalRejected} false positive${ev.totalRejected === 1 ? "" : "s"} rejected`
+          : `Across all sources · ${ev.totalRejected} false positive${ev.totalRejected === 1 ? "" : "s"} rejected`,
+      });
+      // Auto-refresh the feed + overview to surface the new threats.
+      loadOverview();
+      loadThreats();
+    }
+  }, [stream.lastEvent, toast, loadOverview, loadThreats]);
 
   const onScrape = useCallback(
     async (source?: string) => {
@@ -253,13 +278,32 @@ export default function Home() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="hidden items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-1.5 sm:flex">
+            <div
+              className="hidden items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-1.5 sm:flex"
+              title={
+                stream.state === "connected"
+                  ? "Real-time stream connected"
+                  : stream.state === "connecting"
+                    ? "Connecting to real-time stream…"
+                    : "Real-time stream disconnected"
+              }
+            >
               <span className="flex items-center gap-1.5 text-[11px] text-slate-300">
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                  {stream.state === "connected" && (
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  )}
+                  <span
+                    className={`relative inline-flex h-2 w-2 rounded-full ${
+                      stream.state === "connected"
+                        ? "bg-emerald-500"
+                        : stream.state === "connecting"
+                          ? "bg-amber-400"
+                          : "bg-rose-500"
+                    }`}
+                  />
                 </span>
-                LIVE
+                {stream.state === "connected" ? "LIVE" : stream.state === "connecting" ? "SYNC" : "OFFLINE"}
               </span>
               <span className="text-slate-600">·</span>
               <span className="font-mono text-[11px] text-slate-400">
@@ -438,7 +482,15 @@ export default function Home() {
         </div>
       </footer>
 
-      <ThreatDetailDialog threat={selected} open={detailOpen} onOpenChange={setDetailOpen} />
+      <ThreatDetailDialog
+        threat={selected}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        onSelectRelated={(t) => {
+          setSelected(t);
+          // keep dialog open; the related-threats effect re-fetches for the new threat
+        }}
+      />
 
       {/* Keyboard shortcuts help */}
       <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
