@@ -1,13 +1,31 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Globe, Skull, Wifi, RefreshCw, AlertTriangle, CheckCircle2, XCircle, Radar } from "lucide-react";
+import { Globe, Skull, Wifi, RefreshCw, AlertTriangle, CheckCircle2, XCircle, Radar, Clock, Zap } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import type { SourceInfo } from "./types";
 import { sourceTypeMeta, timeAgo } from "./types";
+
+// Estimated scrape duration by source type (LLM classification is the bottleneck).
+const ESTIMATED_DURATION: Record<string, string> = {
+  "ransomware-api": "30–90s",
+  "darkweb-search": "20–60s",
+  "darkforum-intel": "5–15s",
+  "security-rss": "20–60s",
+  "cve": "30–90s",
+};
 
 export function SourcesPanel({
   sources,
@@ -20,6 +38,14 @@ export function SourcesPanel({
   onScrape: (source?: string) => void;
   scraping: boolean | string;
 }) {
+  const [confirmSource, setConfirmSource] = useState<SourceInfo | null>(null);
+
+  const confirmScrape = () => {
+    if (!confirmSource) return;
+    onScrape(confirmSource.name);
+    setConfirmSource(null);
+  };
+
   return (
     <Card className="flex flex-col border-slate-700/60 bg-slate-900/40">
       <div className="flex items-center justify-between border-b border-slate-700/60 p-4">
@@ -92,7 +118,7 @@ export function SourcesPanel({
                       size="sm"
                       variant="ghost"
                       className="h-6 px-2 text-[10px] text-slate-400 opacity-0 transition-opacity hover:bg-slate-700/40 hover:text-slate-100 group-hover:opacity-100"
-                      onClick={() => onScrape(s.name)}
+                      onClick={() => setConfirmSource(s)}
                       disabled={scraping === true || scraping === s.name}
                     >
                       {scraping === s.name ? <RefreshCw className="h-3 w-3 animate-spin" /> : "Run"}
@@ -109,6 +135,68 @@ export function SourcesPanel({
           })}
         </div>
       </ScrollArea>
+
+      {/* Scrape confirmation dialog */}
+      <Dialog open={!!confirmSource} onOpenChange={(v) => !v && setConfirmSource(null)}>
+        <DialogContent className="max-w-md border-slate-700 bg-slate-950 p-0">
+          <DialogHeader className="border-b border-slate-800 p-5 pb-4">
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold text-slate-50">
+              <Zap className="h-4 w-4 text-emerald-400" />
+              Scrape {confirmSource?.name}?
+            </DialogTitle>
+            <DialogDescription className="text-[11px] text-slate-400">
+              This will fetch from the source and run the LLM automotive-relevance classifier on every item.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 p-5">
+            {confirmSource && (
+              <>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3">
+                  <div className="flex items-center gap-2">
+                    {confirmSource.isDarkWeb ? (
+                      <Skull className="h-4 w-4 text-fuchsia-400" />
+                    ) : (
+                      <Globe className="h-4 w-4 text-cyan-400" />
+                    )}
+                    <span className="font-mono text-sm font-semibold text-slate-100">{confirmSource.name}</span>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-slate-400">{confirmSource.description}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="rounded border border-slate-800 bg-slate-900/40 p-2">
+                    <p className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500">
+                      <Clock className="h-3 w-3" /> Est. duration
+                    </p>
+                    <p className="mt-0.5 font-mono text-slate-200">
+                      {ESTIMATED_DURATION[confirmSource.type] ?? "20–60s"}
+                    </p>
+                  </div>
+                  <div className="rounded border border-slate-800 bg-slate-900/40 p-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Current threats</p>
+                    <p className="mt-0.5 font-mono text-emerald-300">{confirmSource.threatCount}</p>
+                  </div>
+                </div>
+                <p className="rounded bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-300">
+                  New threats are LLM-classified to eliminate false positives (≥70 confidence + automotive). The feed auto-refreshes on completion.
+                </p>
+              </>
+            )}
+          </div>
+          <DialogFooter className="border-t border-slate-800 p-4">
+            <Button variant="outline" size="sm" onClick={() => setConfirmSource(null)} className="border-slate-700 text-slate-300">
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={confirmScrape}
+              className="border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Run scrape
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

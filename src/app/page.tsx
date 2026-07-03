@@ -40,6 +40,8 @@ import { SeverityDonut } from "@/components/dashboard/severity-donut";
 import { ActorProfileDialog } from "@/components/dashboard/actor-profile-dialog";
 import { WorldMap } from "@/components/dashboard/world-map";
 import { ScrapeSchedulePanel } from "@/components/dashboard/scrape-schedule-panel";
+import { SystemStatusPanel } from "@/components/dashboard/system-status-panel";
+import { ActorCompareDialog } from "@/components/dashboard/actor-compare-dialog";
 import type { Stats, SourceInfo, AtmTacticData, Threat, Report } from "@/components/dashboard/types";
 
 const PAGE_SIZE = 12;
@@ -73,6 +75,8 @@ export default function Home() {
   const [trendDays, setTrendDays] = usePersistentState("cartint:filter:trendDays", 14);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [actorProfile, setActorProfile] = useState<string | null>(null);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareActors, setCompareActors] = useState<string[]>([]);
   const watchlist = useWatchlist();
   const stream = useThreatStream();
   const watchdog = useWatchdogStatus();
@@ -403,6 +407,9 @@ export default function Home() {
         {/* KPI cards */}
         <KpiCards stats={stats} loading={loading} />
 
+        {/* System status — all services at a glance */}
+        <SystemStatusPanel />
+
         {/* Trend + Sources */}
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <div className="xl:col-span-2">
@@ -479,7 +486,21 @@ export default function Home() {
             <WorldMap stats={stats} />
           </div>
           <div className="space-y-4">
-            <ActorSpotlight stats={stats} onSelectActor={setActorProfile} />
+            <ActorSpotlight
+              stats={stats}
+              onSelectActor={setActorProfile}
+              compareActors={compareActors}
+              onToggleCompare={(name) =>
+                setCompareActors((prev) =>
+                  prev.includes(name)
+                    ? prev.filter((a) => a !== name)
+                    : prev.length < 3
+                      ? [...prev, name]
+                      : prev,
+                )
+              }
+              onOpenCompare={() => setCompareOpen(true)}
+            />
             <SeverityDonut stats={stats} />
           </div>
         </div>
@@ -534,6 +555,23 @@ export default function Home() {
         actor={actorProfile}
         open={!!actorProfile}
         onOpenChange={(v) => !v && setActorProfile(null)}
+      />
+
+      <ActorCompareDialog
+        open={compareOpen}
+        onOpenChange={setCompareOpen}
+        selectedActors={compareActors}
+        stats={stats}
+        onClearSelection={() => setCompareActors([])}
+        onToggleActor={(name) =>
+          setCompareActors((prev) =>
+            prev.includes(name)
+              ? prev.filter((a) => a !== name)
+              : prev.length < 3
+                ? [...prev, name]
+                : prev,
+          )
+        }
       />
 
       {/* Keyboard shortcuts help */}

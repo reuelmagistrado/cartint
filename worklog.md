@@ -485,3 +485,57 @@ Task: Assess project status, QA with agent-browser, fix bugs, add features, impr
   6. PDF export: add a "Download .md" option alongside PDF
   7. Dashboard "system status" page showing all 3 mini-services + dev server health in one view
 
+
+---
+Task ID: 13 (cron round 7 — 2026-07-03 15:04)
+Agent: main (Z.ai Code) — webDevReview cron
+Task: Assess project status, QA with agent-browser, fix bugs, add features, improve styling.
+
+## Current project status assessment (start of round)
+- CARTINT v2 stable through 6 rounds. Dev server up (port 3000 → 200), both mini-services healthy (threat-feed uptime 6466s, watchdog 83 checks/0 fails), lint clean, tsc clean for src/.
+- agent-browser QA: LIVE connected, all 9 sections, 13 charts, threat dialog (IOCs + related) works, no runtime errors.
+- **Found**: leftover empty `src/app/api/system-status/` directory from an interrupted previous round (no route file). Cleaned up by writing the route this round.
+- Decision: stable phase → propose new requirements. Focus on next-phase #7 (system status), #4 (scrape confirmation), #3 (actor comparison).
+
+## Completed modifications / verification
+
+### Feature 1: System Status panel (next-phase #7 — single-pane operational visibility)
+1. **`/api/system-status`** (NEW): aggregates health from all 3 services — Next.js dev server (port 3000, with DB threat/source counts), threat-feed-service (port 3003, clients/uptime), watchdog-scheduler (port 3004, healthChecks/restarts/scheduledScrapes). Returns `{ ok, status, services[], checkedAt }`. Each service pinged with a 4s timeout.
+2. **`src/components/dashboard/system-status-panel.tsx`** (NEW): a card showing all 3 services in a 3-col grid. Each service card: icon (ServerCog/Radio/ShieldCheck), name, status dot (ok=emerald, degraded=amber, down=rose), label, port, uptime, and service-specific details (clients for threat-feed, checks/scheduled/restarts for watchdog, threats for Next.js). Auto-refreshes every 30s. Header shows overall status badge ("operational"/"degraded"/"partial") + last-checked time.
+3. Placed prominently right after the KPI cards (above the trend chart) for at-a-glance operational visibility.
+
+### Feature 2: Per-source "Scrape Now" confirmation (next-phase #4)
+4. **`sources-panel.tsx`**: the per-source "Run" button now opens a confirmation dialog instead of immediately triggering. Dialog shows: source name + description, estimated duration (by source type — ransomware-api/cve 30-90s, darkweb-search/security-rss 20-60s, darkforum-intel 5-15s), current threat count, an amber info banner explaining LLM classification + auto-refresh, and Cancel/Run scrape buttons. Prevents accidental long scrapes.
+
+### Feature 3: Threat-actor comparison view (next-phase #3)
+5. **`src/components/dashboard/actor-compare-dialog.tsx`** (NEW): select up to 3 actors (via checkboxes in the ActorSpotlight OR an in-dialog selector) and compare side-by-side. Comparison includes:
+   - Metric table (total threats, critical, victims, first/last seen) with a 🏆 trophy on the per-metric leader
+   - Severity breakdown stacked bars (critical/high/medium/low proportional, per actor)
+   - Top ATM tactics per actor (top 4, side-by-side cards)
+   - Targeted victims per actor (badges, side-by-side cards)
+6. **`actor-spotlight.tsx`** enhanced: each actor row now has a compare-selection checkbox (fuchsia when selected, disabled when 3 already selected). A "Compare (N)" button appears in the header when ≥1 actor is selected. Clicking opens the comparison dialog.
+7. Wired into `page.tsx`: `compareActors` state + `compareOpen` state + `<ActorCompareDialog>` with `onToggleActor` prop for in-dialog selection.
+
+### Styling improvements (mandatory "improve styling")
+8. **System Status panel**: 3-col service grid with per-service icons + colored status dots + detail rows; overall status badge with animated dot.
+9. **Scrape confirmation**: source card with dark-web/OSINT icon, 2-col stat grid (duration + threats), amber info banner, footer with Cancel/Run buttons.
+10. **Actor comparison**: multi-colored actor headers (fuchsia/emerald/amber/cyan/rose), 🏆 trophy on metric leaders, proportional severity bars, side-by-side tactic + victim cards.
+
+### Verification (agent-browser via Caddy :81)
+- ✅ System Status panel: "System Status" + "OPERATIONAL" badge + all 3 services (Next.js Dashboard, threat-feed-service, watchdog-scheduler) render. `/api/system-status` returns 200.
+- ✅ Scrape confirmation: clicking a source "Run" → dialog "Scrape ahmia-darkweb?" with "EST. DURATION", "Cancel", "Run scrape".
+- ✅ Actor compare: selecting 2 actors via checkboxes → "Compare (2)" button appears; opening dialog shows "Threat Actor Comparison", "SELECT ACTORS (2/3)", "Total threats", "Critical", "Victims", "SEVERITY BREAKDOWN", "TOP ATM TACTICS", "TARGETED VICTIMS".
+- ✅ `bun run lint` clean; `tsc --noEmit` clean for src/; no runtime errors. 13 charts intact.
+
+## Unresolved issues / risks / next-phase recommendations
+- The actor comparison fetches each actor's profile in parallel (3 fetches); acceptable latency (~600ms each).
+- The system-status panel polls every 30s; could add a manual "refresh" button.
+- **Next-phase priorities**:
+  1. Tor-proxy mini-service for live .onion fetches (currently Ahmia clearnet gateway)
+  2. Bundle world-atlas TopoJSON locally (offline reliability)
+  3. Watchdog: add email/Slack alert on restart (not just console log)
+  4. PDF export: add a "Download .md" option alongside PDF
+  5. Dashboard search: global command palette (Cmd+K) to jump to any threat/actor/source
+  6. Threat trend: add a "predicted threat volume" forecast line (simple moving-average projection)
+  7. Add a "recently added threats" live ticker (last 5 threats, auto-updating)
+

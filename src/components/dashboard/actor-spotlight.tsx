@@ -1,9 +1,10 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Skull, TrendingUp, AlertCircle } from "lucide-react";
+import { Skull, TrendingUp, AlertCircle, GitCompareArrows, Check } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Stats } from "./types";
@@ -32,11 +33,24 @@ function actorTier(count: number): { label: string; tone: string; bar: string; d
   };
 }
 
-export function ActorSpotlight({ stats, onSelectActor }: { stats: Stats | null; onSelectActor?: (actor: string) => void }) {
+export function ActorSpotlight({
+  stats,
+  onSelectActor,
+  compareActors = [],
+  onToggleCompare,
+  onOpenCompare,
+}: {
+  stats: Stats | null;
+  onSelectActor?: (actor: string) => void;
+  compareActors?: string[];
+  onToggleCompare?: (actor: string) => void;
+  onOpenCompare?: () => void;
+}) {
   const actors = (stats?.byActor ?? []).filter((a) => a.name && a.name.toLowerCase() !== "unknown");
   const max = actors.reduce((m, a) => Math.max(m, a.count), 0);
   const total = actors.reduce((s, a) => s + a.count, 0);
   const top = actors[0];
+  const compareCount = compareActors.length;
 
   return (
     <Card className="flex flex-col border-slate-700/60 bg-slate-900/40">
@@ -49,9 +63,21 @@ export function ActorSpotlight({ stats, onSelectActor }: { stats: Stats | null; 
             Most active ransomware groups & dark-web vendors
           </p>
         </div>
-        <Badge variant="outline" className="h-5 border-fuchsia-500/40 bg-fuchsia-500/10 px-2 text-[10px] text-fuchsia-300">
-          {actors.length} actors
-        </Badge>
+        <div className="flex items-center gap-2">
+          {compareCount > 0 && (
+            <Button
+              size="sm"
+              onClick={onOpenCompare}
+              className="h-7 border-fuchsia-500/40 bg-fuchsia-500/15 px-2 text-[10px] text-fuchsia-200 hover:bg-fuchsia-500/25"
+            >
+              <GitCompareArrows className="h-3 w-3" />
+              Compare ({compareCount})
+            </Button>
+          )}
+          <Badge variant="outline" className="h-5 border-fuchsia-500/40 bg-fuchsia-500/10 px-2 text-[10px] text-fuchsia-300">
+            {actors.length} actors
+          </Badge>
+        </div>
       </div>
 
       {/* Most active actor highlight */}
@@ -115,6 +141,27 @@ export function ActorSpotlight({ stats, onSelectActor }: { stats: Stats | null; 
                       <span className="truncate font-mono text-xs font-semibold text-slate-100 group-hover:text-fuchsia-200">{a.name}</span>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
+                      {onToggleCompare && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleCompare(a.name);
+                          }}
+                          disabled={!compareActors.includes(a.name) && compareCount >= 3}
+                          className={`flex h-4 w-4 items-center justify-center rounded border transition-colors ${
+                            compareActors.includes(a.name)
+                              ? "border-fuchsia-500/60 bg-fuchsia-500/30 text-fuchsia-200"
+                              : compareCount >= 3
+                                ? "border-slate-800 bg-slate-900/30 text-slate-700 cursor-not-allowed"
+                                : "border-slate-600 text-transparent hover:border-fuchsia-500/40 hover:bg-slate-800"
+                          }`}
+                          title={compareActors.includes(a.name) ? "Remove from comparison" : "Add to comparison (max 3)"}
+                          aria-label={compareActors.includes(a.name) ? "Remove from comparison" : "Add to comparison"}
+                        >
+                          <Check className="h-2.5 w-2.5" />
+                        </button>
+                      )}
                       <Badge variant="outline" className={`h-4 border px-1.5 text-[9px] ${tier.tone}`}>
                         {tier.label}
                       </Badge>
