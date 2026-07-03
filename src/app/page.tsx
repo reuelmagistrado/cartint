@@ -25,6 +25,7 @@ import { useKeyboardShortcuts, SHORTCUT_HELP } from "@/hooks/use-keyboard-shortc
 import { useWatchlist } from "@/hooks/use-watchlist";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useThreatStream, type ThreatStreamEvent } from "@/hooks/use-threat-stream";
+import { useWatchdogStatus } from "@/hooks/use-watchdog-status";
 import { KpiCards } from "@/components/dashboard/kpi-cards";
 import { TrendChart } from "@/components/dashboard/trend-chart";
 import { BreakdownCharts } from "@/components/dashboard/breakdown-charts";
@@ -74,6 +75,7 @@ export default function Home() {
   const [actorProfile, setActorProfile] = useState<string | null>(null);
   const watchlist = useWatchlist();
   const stream = useThreatStream();
+  const watchdog = useWatchdogStatus();
 
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState<boolean | string>(false);
@@ -315,6 +317,26 @@ export default function Home() {
                 {lastUpdated ? `updated ${formatTimeAgo(lastUpdated)}` : "loading…"}
               </span>
             </div>
+            {watchdog && (
+              <div
+                className="hidden items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/50 px-2.5 py-1.5 lg:flex"
+                title={
+                  watchdog.ok
+                    ? `Watchdog healthy · ${watchdog.healthChecks} checks · ${watchdog.restarts} restarts · ${watchdog.scheduledScrapes} scheduled scrapes`
+                    : "Watchdog offline"
+                }
+              >
+                <span
+                  className={`relative flex h-1.5 w-1.5 rounded-full ${watchdog.ok ? "bg-emerald-500" : "bg-rose-500"}`}
+                />
+                <span className="font-mono text-[10px] text-slate-400">
+                  {watchdog.ok ? "WD" : "WD!"}
+                  {watchdog.scheduledScrapes > 0 && (
+                    <span className="ml-1 text-amber-300">·{watchdog.scheduledScrapes}⚙</span>
+                  )}
+                </span>
+              </div>
+            )}
             <Button
               onClick={() => onScrape()}
               disabled={scraping === true}

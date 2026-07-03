@@ -432,3 +432,56 @@ Task: Assess project status, QA with agent-browser, fix bugs, add features, impr
   6. Export CTI reports as PDF
   7. Add a "scrape now" button per source in the sources panel with estimated duration
 
+
+---
+Task ID: 12 (cron round 6 — 2026-07-03 14:19)
+Agent: main (Z.ai Code) — webDevReview cron
+Task: Assess project status, QA with agent-browser, fix bugs, add features, improve styling.
+
+## Current project status assessment (start of round)
+- CARTINT v2 stable through round 5. Dev server up (port 3000 → 200), mini-service healthy (uptime 3886s), lint clean, tsc clean for src/.
+- agent-browser QA: LIVE connected, 43 threats, 13 charts, all 9 sections render, world map (177 paths), threat dialog (IOCs + related) works, no runtime errors.
+- Decision: stable phase → propose new requirements. Focus on operational reliability (next-phase #4 watchdog + #3 background scheduler) + a high-value analyst feature (#6 PDF export).
+
+## Completed modifications / verification
+
+### Feature 1: Watchdog + Scheduler mini-service (next-phase #4 + #3)
+1. **`mini-services/watchdog-scheduler/`** (NEW — independent bun project, port 3004, `bun --hot`):
+   - **Health watchdog**: pings `http://localhost:3000/api/stats` every 30s. After 3 consecutive failures, kills any existing `next dev` process and restarts it via `bun run dev` (output appended to project dev.log). Prevents the blank-page bug seen in round 4.
+   - **Scheduled scrapes**: every 60s, fetches `/api/sources/config`. For each enabled source with `scrapeIntervalMin > 0` whose `lastFetchAt` is older than the interval, POSTs `/api/scrape` with `{ source }`. Makes the ScrapeSchedulePanel functional (not just advisory).
+   - Exposes `/health` (GET) returning: healthChecks, healthFails, lastHealthOk, restarts, lastRestart, scheduledScrapes, lastScheduledScrape, uptime.
+   - Started in background; verified healthy (11 checks, 0 fails, 0 restarts, uptime 299s).
+2. **`/api/watchdog-proxy`** (NEW): server-side proxy to the watchdog mini-service so the client reads status without XTransformPort handling. Returns 502 + zeros if the mini-service is down.
+3. **`src/hooks/use-watchdog-status.ts`** (NEW): polls `/api/watchdog-proxy` every 30s; exposes the watchdog status.
+4. **Header watchdog indicator**: a compact "WD" badge (green dot when healthy, red "WD!" when offline) with tooltip showing checks/restarts/scheduled-scrape counts. Shows a ⚙ count when scheduled scrapes have run.
+
+### Feature 2: PDF / Print export for CTI reports (next-phase #6)
+5. **`report-generator.tsx`**: added a "PDF / Print" button (Printer icon) to the report viewer dialog header. Clicking opens a new window with a print-styled HTML rendering of the report (white page, emerald accent header, proper h2/h3/h4 hierarchy, bold support, page margins, footer with confidentiality notice) and triggers `window.print()` — the browser print dialog includes "Save as PDF".
+6. **`renderReportHtml()`** helper: parses the Markdown report content (headings, list items, bold, paragraphs) into clean print HTML with a CARTINT branded header (title, period, generated date) and footer.
+
+### Styling improvements (mandatory "improve styling")
+7. **Watchdog indicator**: compact badge with colored dot + scheduled-scrape ⚙ count, tooltip with full stats.
+8. **PDF export button**: emerald-outlined button in the report dialog header, consistent with the dashboard's accent system.
+9. **Print layout**: professional white-page PDF styling (emerald header bar, proper typographic hierarchy, page margins, confidentiality footer) — a deliverable analysts can share.
+
+### Verification (agent-browser via Caddy :81)
+- ✅ Watchdog-scheduler running: `/health` returns `{"ok":true,"healthChecks":11,"healthFails":0,"restarts":0,...}`. Both mini-services (3003 threat-feed, 3004 watchdog) healthy.
+- ✅ `/api/watchdog-proxy` returns full status via Caddy.
+- ✅ Watchdog "WD" indicator renders in header.
+- ✅ PDF / Print button: present in report viewer dialog ("PDF / Print"), clicking runs cleanly (no dev.log errors).
+- ✅ All 9 dashboard sections still render; 13 charts; LIVE connected.
+- ✅ `bun run lint` clean; `tsc --noEmit` clean for src/; no runtime errors.
+
+## Unresolved issues / risks / next-phase recommendations
+- The watchdog restart logic uses `pkill -f "next dev"` + `bun run dev`; this works in the current sandbox but is platform-specific. A production deployment would use a proper process manager (PM2, systemd).
+- The scheduled scrapes run sequentially (one source at a time) to avoid overloading the LLM classifier; acceptable for the configured intervals.
+- The PDF export uses `window.open` + `window.print()`; popup blockers may interfere in some browsers (the button still works, just may need a popup allow). Could add a fallback message.
+- **Next-phase priorities**:
+  1. Tor-proxy mini-service for live .onion fetches (currently Ahmia clearnet gateway)
+  2. Bundle world-atlas TopoJSON locally (offline reliability)
+  3. Threat-actor comparison view (compare 2-3 actors side-by-side)
+  4. Add a "scrape now" button per source in the sources panel with estimated duration
+  5. Watchdog: add email/Slack alert on restart (not just console log)
+  6. PDF export: add a "Download .md" option alongside PDF
+  7. Dashboard "system status" page showing all 3 mini-services + dev server health in one view
+
