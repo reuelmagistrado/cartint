@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download } from "lucide-react";
+import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download, Star } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -218,6 +218,12 @@ export function ThreatFeed({
   pageSize,
   includeRejected,
   setIncludeRejected,
+  watchlistOnly,
+  setWatchlistOnly,
+  watchlistCount,
+  isWatched,
+  toggleWatch,
+  searchInputId,
 }: {
   threats: Threat[];
   total: number;
@@ -230,6 +236,12 @@ export function ThreatFeed({
   pageSize: number;
   includeRejected: boolean;
   setIncludeRejected: (v: boolean) => void;
+  watchlistOnly: boolean;
+  setWatchlistOnly: (v: boolean) => void;
+  watchlistCount: number;
+  isWatched: (id: string) => boolean;
+  toggleWatch: (id: string) => void;
+  searchInputId: string;
 }) {
   const [localSearch, setLocalSearch] = useState(search);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -255,6 +267,7 @@ export function ThreatFeed({
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <input
+              id={searchInputId}
               value={localSearch}
               onChange={(e) => setLocalSearch(e.target.value)}
               onKeyDown={(e) => {
@@ -262,11 +275,33 @@ export function ThreatFeed({
                   setSearch(localSearch);
                   setPage(0);
                 }
+                if (e.key === "Escape" && localSearch) {
+                  setLocalSearch("");
+                  setSearch("");
+                  setPage(0);
+                }
               }}
               placeholder="Search title, victim, actor…"
               className="h-8 w-44 rounded border border-slate-700 bg-slate-900/60 pl-8 pr-2 text-xs text-slate-200 transition-colors placeholder:text-slate-500 focus:border-emerald-500/50 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50 sm:w-56"
             />
           </div>
+          <Button
+            size="sm"
+            variant={watchlistOnly ? "default" : "outline"}
+            onClick={() => {
+              setWatchlistOnly(!watchlistOnly);
+              setPage(0);
+            }}
+            className={
+              watchlistOnly
+                ? "h-8 border-amber-400/50 bg-amber-400/20 text-amber-200 hover:bg-amber-400/25"
+                : "h-8 border-slate-700 text-slate-300 hover:bg-slate-800"
+            }
+            title="Toggle watchlist filter (w)"
+          >
+            <Star className={`h-3.5 w-3.5 ${watchlistOnly ? "fill-amber-300" : ""}`} />
+            Watchlist{watchlistCount > 0 ? ` (${watchlistCount})` : ""}
+          </Button>
           <Button
             size="sm"
             variant={includeRejected ? "default" : "outline"}
@@ -311,6 +346,7 @@ export function ThreatFeed({
         <table className="w-full text-left text-xs">
           <thead className="sticky top-0 z-10 bg-slate-950/95 backdrop-blur">
             <tr className="border-b border-slate-700/60 text-[10px] uppercase tracking-wider text-slate-500">
+              <th className="w-8 px-2 py-2 font-medium">★</th>
               <th className="px-3 py-2 font-medium">Severity</th>
               <th className="px-3 py-2 font-medium">Threat</th>
               <th className="hidden px-3 py-2 font-medium md:table-cell">Source</th>
@@ -325,7 +361,7 @@ export function ThreatFeed({
             {loading && threats.length === 0
               ? Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-b border-slate-800/40">
-                    <td className="px-3 py-2.5" colSpan={8}>
+                    <td className="px-3 py-2.5" colSpan={9}>
                       <div className="h-3 animate-pulse rounded bg-slate-800/60" />
                     </td>
                   </tr>
@@ -334,6 +370,7 @@ export function ThreatFeed({
                   const sev = SEVERITY_META[t.severity];
                   const srcMeta = sourceTypeMeta(t.sourceType);
                   const isRejected = !t.isAutomotive || t.relevanceScore < 70;
+                  const watched = isWatched(t.id);
                   return (
                     <motion.tr
                       key={t.id}
@@ -341,8 +378,30 @@ export function ThreatFeed({
                       animate={{ opacity: 1 }}
                       transition={{ delay: Math.min(i * 0.015, 0.3) }}
                       onClick={() => onSelect(t)}
-                      className="cursor-pointer border-b border-slate-800/40 transition-colors hover:bg-slate-800/40 hover:shadow-[inset_2px_0_0_0_rgba(16,185,129,0.6)]"
+                      className={`cursor-pointer border-b border-slate-800/40 transition-colors hover:bg-slate-800/40 hover:shadow-[inset_2px_0_0_0_rgba(16,185,129,0.6)] ${
+                        t.severity === "critical" && !isRejected
+                          ? "border-l-2 border-l-rose-500/50"
+                          : watched
+                            ? "border-l-2 border-l-amber-400/50"
+                            : ""
+                      }`}
                     >
+                      <td className="px-2 py-2.5 text-center">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleWatch(t.id);
+                          }}
+                          className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors hover:bg-slate-700/50 ${
+                            watched ? "text-amber-300" : "text-slate-600 hover:text-slate-400"
+                          }`}
+                          title={watched ? "Remove from watchlist" : "Add to watchlist"}
+                          aria-label={watched ? "Remove from watchlist" : "Add to watchlist"}
+                        >
+                          <Star className={`h-3.5 w-3.5 ${watched ? "fill-amber-300" : ""}`} />
+                        </button>
+                      </td>
                       <td className="px-3 py-2.5">
                         <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase ${sev.bg} ${sev.border} ${sev.text}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${sev.dot}`} />
@@ -385,8 +444,10 @@ export function ThreatFeed({
                 })}
             {!loading && threats.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-10 text-center text-slate-500">
-                  No threats match the current filters.
+                <td colSpan={9} className="px-3 py-10 text-center text-slate-500">
+                  {watchlistOnly
+                    ? "Your watchlist is empty. Star threats (★) to track them here."
+                    : "No threats match the current filters."}
                 </td>
               </tr>
             )}

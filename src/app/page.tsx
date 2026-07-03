@@ -14,11 +14,15 @@ import {
   Loader2,
   Filter,
   Sparkles,
+  Keyboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useKeyboardShortcuts, SHORTCUT_HELP } from "@/hooks/use-keyboard-shortcuts";
+import { useWatchlist } from "@/hooks/use-watchlist";
 import { KpiCards } from "@/components/dashboard/kpi-cards";
 import { TrendChart } from "@/components/dashboard/trend-chart";
 import { BreakdownCharts } from "@/components/dashboard/breakdown-charts";
@@ -58,6 +62,10 @@ export default function Home() {
   const [fTactic, setFTactic] = useState("all");
   const [fCountry, setFCountry] = useState("all");
   const [includeRejected, setIncludeRejected] = useState(false);
+  const [watchlistOnly, setWatchlistOnly] = useState(false);
+  const [trendDays, setTrendDays] = useState(14);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const watchlist = useWatchlist();
 
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState<boolean | string>(false);
@@ -65,7 +73,7 @@ export default function Home() {
 
   const loadOverview = useCallback(async () => {
     const [s, src, a, f, r] = await Promise.all([
-      fetch("/api/stats").then((r) => r.json()),
+      fetch(`/api/stats?trendDays=${trendDays}`).then((r) => r.json()),
       fetch("/api/sources").then((r) => r.json()),
       fetch("/api/atm").then((r) => r.json()),
       fetch("/api/filters").then((r) => r.json()),
@@ -78,7 +86,7 @@ export default function Home() {
     setReports(r.reports);
     setLastUpdated(new Date());
     setLoading(false);
-  }, []);
+  }, [trendDays]);
 
   const loadThreats = useCallback(async () => {
     setThreatsLoading(true);
@@ -93,6 +101,12 @@ export default function Home() {
       search,
       includeRejected: includeRejected ? "1" : "0",
     });
+    if (watchlistOnly && watchlist.count > 0) {
+      params.set("watchlist", [...watchlist.ids].join(","));
+    } else if (watchlistOnly) {
+      // No watched items — request an impossible id to return an empty list.
+      params.set("watchlist", "__none__");
+    }
     try {
       const res = await fetch(`/api/threats?${params}`);
       const json = await res.json();
@@ -101,7 +115,7 @@ export default function Home() {
     } finally {
       setThreatsLoading(false);
     }
-  }, [page, fSource, fSeverity, fCategory, fTactic, fCountry, search, includeRejected]);
+  }, [page, fSource, fSeverity, fCategory, fTactic, fCountry, search, includeRejected, watchlistOnly, watchlist.ids, watchlist.count]);
 
   useEffect(() => {
     loadOverview();
@@ -152,6 +166,55 @@ export default function Home() {
     setSelected(t);
     setDetailOpen(true);
   };
+
+  // Keyboard shortcuts: `/` focus search, `r` refresh, `f` FP audit, `w` watchlist,
+  // `Escape` close dialogs / help, `?` toggle shortcuts help.
+  useKeyboardShortcuts([
+    {
+      key: "/",
+      description: "Focus threat search",
+      handler: () => {
+        const el = document.getElementById("threat-search-input") as HTMLInputElement | null;
+        el?.focus();
+        el?.select();
+      },
+    },
+    {
+      key: "r",
+      description: "Refresh feed (scrape all sources)",
+      handler: () => onScrape(),
+    },
+    {
+      key: "f",
+      description: "Toggle false-positive audit mode",
+      handler: () => {
+        setIncludeRejected((v) => !v);
+        setPage(0);
+      },
+    },
+    {
+      key: "w",
+      description: "Toggle watchlist filter",
+      handler: () => {
+        setWatchlistOnly((v) => !v);
+        setPage(0);
+      },
+    },
+    {
+      key: "?",
+      description: "Show keyboard shortcuts help",
+      handler: () => setShortcutsOpen((v) => !v),
+    },
+    {
+      key: "Escape",
+      description: "Close dialog / help",
+      allowInInput: true,
+      handler: () => {
+        if (shortcutsOpen) setShortcutsOpen(false);
+        else if (detailOpen) setDetailOpen(false);
+      },
+    },
+  ]);
 
   return (
     <div className="dark flex min-h-screen flex-col bg-[#070b12] text-slate-200">
@@ -216,6 +279,16 @@ export default function Home() {
               )}
               Refresh Feed
             </Button>
+            <Button
+              onClick={() => setShortcutsOpen(true)}
+              variant="outline"
+              size="sm"
+              className="border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+              title="Keyboard shortcuts (?)"
+            >
+              <Keyboard className="h-4 w-4" />
+              <kbd className="ml-1 hidden rounded border border-slate-600 bg-slate-800 px-1 font-mono text-[9px] text-slate-400 sm:inline">?</kbd>
+            </Button>
           </div>
         </div>
       </header>
@@ -262,7 +335,7 @@ export default function Home() {
         {/* Trend + Sources */}
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <div className="xl:col-span-2">
-            <TrendChart stats={stats} />
+            <TrendChart stats={stats} trendDays={trendDays} onTrendDaysChange={setTrendDays} />
           </div>
           <div>
             <SourcesPanel sources={sources} loading={loading} onScrape={onScrape} scraping={scraping} />
@@ -311,6 +384,12 @@ export default function Home() {
             pageSize={PAGE_SIZE}
             includeRejected={includeRejected}
             setIncludeRejected={setIncludeRejected}
+            watchlistOnly={watchlistOnly}
+            setWatchlistOnly={setWatchlistOnly}
+            watchlistCount={watchlist.count}
+            isWatched={watchlist.has}
+            toggleWatch={watchlist.toggle}
+            searchInputId="threat-search-input"
           />
         </div>
 
@@ -360,6 +439,32 @@ export default function Home() {
       </footer>
 
       <ThreatDetailDialog threat={selected} open={detailOpen} onOpenChange={setDetailOpen} />
+
+      {/* Keyboard shortcuts help */}
+      <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
+        <DialogContent className="max-w-md border-slate-700 bg-slate-950 p-0">
+          <DialogHeader className="border-b border-slate-800 p-5 pb-4">
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold text-slate-50">
+              <Keyboard className="h-4 w-4 text-emerald-400" /> Keyboard Shortcuts
+            </DialogTitle>
+          </DialogHeader>
+          <div className="p-5">
+            <ul className="space-y-2">
+              {SHORTCUT_HELP.map((s) => (
+                <li key={s.key} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-slate-300">{s.description}</span>
+                  <kbd className="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 font-mono text-xs font-semibold text-emerald-300">
+                    {s.key}
+                  </kbd>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-[11px] text-slate-500">
+              Shortcuts are disabled while typing in inputs (except <kbd className="rounded border border-slate-700 bg-slate-800 px-1 font-mono">Esc</kbd>).
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -4,6 +4,7 @@
 // automotive AND above the configured threshold are surfaced as real threats.
 import ZAI from "z-ai-web-dev-sdk";
 import { ATM_TACTICS } from "@/lib/atm";
+import { isContentFilterError, heuristicClassifyBatch } from "./heuristic";
 
 export type RawItem = {
   externalId: string;
@@ -159,20 +160,28 @@ export async function classifyBatch(items: RawItem[]): Promise<Classification[]>
       const result = await llmClassify(chunk);
       out.push(...result);
     } catch (err) {
-      for (const item of chunk) {
-        out.push({
-          externalId: item.externalId,
-          isAutomotive: false,
-          relevanceScore: 0,
-          severity: "low",
-          classificationReason: `LLM classification failed: ${(err as Error).message}`,
-          title: item.title,
-          description: item.description,
-          actor: item.actor,
-          victimOrg: item.victimOrg,
-          country: item.country,
-          dataTypes: item.dataTypes,
-        });
+      // Content-filter errors must NOT auto-reject items (that creates false
+      // negatives). Fall back to the deterministic heuristic classifier so
+      // legitimate automotive threats still surface. Only true network/infra
+      // errors mark items as unclassified.
+      if (isContentFilterError(err)) {
+        out.push(...heuristicClassifyBatch(chunk));
+      } else {
+        for (const item of chunk) {
+          out.push({
+            externalId: item.externalId,
+            isAutomotive: false,
+            relevanceScore: 0,
+            severity: "low",
+            classificationReason: `LLM classification failed (non-content-filter): ${(err as Error).message}`.slice(0, 300),
+            title: item.title,
+            description: item.description,
+            actor: item.actor,
+            victimOrg: item.victimOrg,
+            country: item.country,
+            dataTypes: item.dataTypes,
+          });
+        }
       }
     }
   }

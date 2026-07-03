@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { RELEVANCE_THRESHOLD, ensureSourcesSeeded } from "@/lib/scraper";
 import { seedIfEmpty } from "@/lib/scraper/seed";
@@ -6,9 +6,12 @@ import { seedIfEmpty } from "@/lib/scraper/seed";
 export const dynamic = "force-dynamic";
 
 // GET /api/stats — dashboard KPIs and chart data.
-export async function GET() {
+// Query: ?trendDays=7|14|30 (default 14) — controls the threats-over-time window.
+export async function GET(req: NextRequest) {
   await ensureSourcesSeeded();
   await seedIfEmpty();
+
+  const trendDays = Math.min(Math.max(Number(req.nextUrl.searchParams.get("trendDays") ?? 14) || 14, 1), 90);
 
   const accepted = {
     isAutomotive: true,
@@ -85,13 +88,13 @@ export async function GET() {
   });
 
   // Threats over time — last 14 days.
-  const since = new Date(Date.now() - 14 * 86400000);
+  const since = new Date(Date.now() - trendDays * 86400000);
   const recentThreats = await db.threat.findMany({
     where: { ...accepted, attackDate: { gte: since } },
     select: { attackDate: true, severity: true },
   });
   const trend: { date: string; critical: number; high: number; medium: number; low: number }[] = [];
-  for (let i = 13; i >= 0; i--) {
+  for (let i = trendDays - 1; i >= 0; i--) {
     const d = new Date(Date.now() - i * 86400000);
     const key = d.toISOString().slice(0, 10);
     trend.push({ date: key, critical: 0, high: 0, medium: 0, low: 0 });

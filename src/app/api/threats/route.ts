@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const search = sp.get("search");
   const minScore = Number(sp.get("minScore") ?? RELEVANCE_THRESHOLD);
   const includeRejected = sp.get("includeRejected") === "1";
+  const watchlistIds = sp.get("watchlist");
 
   const where: Record<string, unknown> = {};
   if (!includeRejected) {
@@ -34,6 +35,10 @@ export async function GET(req: NextRequest) {
         { relevanceScore: { lt: RELEVANCE_THRESHOLD } },
       ];
     }
+  }
+  if (watchlistIds) {
+    const ids = watchlistIds.split(",").filter(Boolean);
+    where.id = { in: ids.length > 0 ? ids : ["__none__"] };
   }
   if (source && source !== "all") where.sourceName = source;
   if (severity && severity !== "all") where.severity = severity;
