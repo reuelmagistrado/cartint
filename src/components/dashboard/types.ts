@@ -116,6 +116,17 @@ export type RelatedThreat = {
   reasons: string[];
 };
 
+// IOCs returned by /api/threats/[id]/iocs.
+export type IOCsResult = {
+  cves: string[];
+  actors: string[];
+  dataTypes: string[];
+  components: string[];
+  countries: string[];
+  misc: string[];
+  method: "llm" | "regex-fallback" | "none";
+};
+
 export const SEVERITY_META: Record<
   Severity,
   { label: string; text: string; bg: string; border: string; dot: string; hex: string }

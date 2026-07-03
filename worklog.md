@@ -266,3 +266,59 @@ Task: Assess project status, QA with agent-browser, fix bugs, add features, impr
   5. Add a "scrape history" timeline chart (accepted vs rejected per scrape run over time)
   6. Persist watchlist + includeRejected state to localStorage (currently only filters persist)
 
+
+---
+Task ID: 9 (cron round 3 — 2026-07-03 13:31)
+Agent: main (Z.ai Code) — webDevReview cron
+Task: Assess project status, QA with agent-browser, fix bugs, add features, improve styling.
+
+## Current project status assessment (start of round)
+- CARTINT v2 stable and verified through round 2 (WebSocket live-push + related threats + filter persistence + KPI sparklines). Dev server + mini-service both healthy.
+- Baseline: `bun run lint` clean; `tsc --noEmit` clean for src/.
+- agent-browser QA: LIVE connected, 43 threats, 26% FP rejection, 8 charts, related threats work, footer pinned. No bugs found.
+- Decision: stable phase → propose new requirements aligned with task goals (false-positive precision, ATM mapping depth, dashboard UX).
+
+## Completed modifications / verification
+
+### Feature 1: Scrape-history timeline chart (false-positive precision visibility)
+1. **`/api/scrape-history`** (NEW): returns the last 60 scrape runs as a timeline with per-run `fetched/accepted/rejected`, a per-run rejection rate, and a cumulative FP-rate trend. Also aggregates by source. Used for the new chart + per-source breakdown.
+2. **`src/components/dashboard/scrape-history-chart.tsx`** (NEW): a ComposedChart with stacked areas (accepted=emerald, rejected=rose) on the left Y axis + a cumulative-FP-rate line (amber) on the right Y axis (0-100%). Header shows running totals (accepted/rejected/cum%). Below the chart: a per-source breakdown bar (green/red proportional bar + % per source). Auto-refreshes every 30s.
+3. Integrated as a full-width section between BreakdownCharts and the Geo/Actor row in page.tsx.
+
+### Feature 2: IOC (Indicators of Compromise) extraction (analyst enrichment)
+4. **`/api/threats/[id]/iocs`** (NEW): extracts IOCs from the threat text via LLM (CVEs, actors, dataTypes, components, countries, misc emails/hashes/IPs). Falls back to regex extraction on content-filter errors. Always merges in regex-extracted CVEs/emails/hashes/IPs so deterministic patterns are never missed even if the LLM overlooks them. Returns `method: "llm" | "regex-fallback" | "none"`.
+5. **IOCs section in threat detail dialog** (`threat-feed.tsx`): fetches IOCs on dialog open (parallel with related threats). Renders an "Indicators of Compromise" section with a Fingerprint icon + method badge (LLM-extracted / regex fallback). Each IOC category (CVEs, Threat Actors, Data Types, Components, Countries, Other IOCs) renders as color-coded copy-to-clipboard badges (click to copy, check-icon confirmation). Empty categories hidden; "No IOCs detected" fallback.
+6. `IOCsResult` type added to `types.ts`.
+
+### Feature 3: ATM tactic drill-down (ATM mapping depth)
+7. **`atm-matrix.tsx`** enhanced: tactics with threats > 0 are now clickable (cursor-pointer + hover border-glow + chevron icon). Clicking opens a drill-down dialog showing:
+   - Tactic name + threat count + description
+   - Full technique breakdown (each technique with count, name, description, ID — dimmed if count=0)
+   - Example threats (top 12 for that tactic, fetched from `/api/threats?tactic=`) with severity badge, victim/category/date, relevance score, and the specific ATM technique used.
+8. Subtitle updated to "click a tactic to drill down".
+
+### Styling improvements (mandatory "improve styling")
+9. **Scrape-history chart**: dual-axis ComposedChart with gradient area fills + per-source proportional breakdown bars.
+10. **IOC badges**: 6 color tones (rose/amber/cyan/emerald/teal/slate), monospace font, copy icon that animates to a check on copy, hover border intensifies.
+11. **ATM drill-down dialog**: technique rows with heat-colored count badges + dimmed state for zero-count techniques; example-threat rows with severity badges + relevance scores.
+12. **ATM matrix rows**: hover state (border-emerald glow + bg lift) + chevron affordance on clickable tactics.
+
+### Verification (agent-browser via Caddy :81)
+- ✅ Scrape-history chart renders: "Scrape History & False-Positive Trend", "26% cum. FP rate", "PER-SOURCE BREAKDOWN" all present. Chart count went 8 → 12 SVGs.
+- ✅ `/api/scrape-history` returns 200.
+- ✅ IOCs section: opening a threat dialog shows "INDICATORS OF COMPROMISE" with "LLM-EXTRACTED" badge and categories (DATA TYPES, THREAT ACTORS, COMPONENTS). `/api/threats/[id]/iocs` returns 200.
+- ✅ ATM drill-down: clicking "Initial Access" tactic opens dialog with "14 threats", "TECHNIQUES (4)", "EXAMPLE THREATS" sections.
+- ✅ `bun run lint` clean; `tsc --noEmit` clean for src/; no runtime/hydration errors.
+
+## Unresolved issues / risks / next-phase recommendations
+- The IOC LLM call takes ~3-4s (acceptable for an on-demand dialog section; could be cached in the DB if perf becomes an issue).
+- The ATM drill-down reuses the `/api/threats?tactic=` filter (already existed) — efficient, no new DB query path.
+- **Next-phase priorities**:
+  1. Tor-proxy mini-service for live .onion fetches (currently Ahmia clearnet gateway)
+  2. World-map geographic visualization (upgrade from bar chart to react-simple-maps)
+  3. Scrape schedule config panel (let analysts choose which sources auto-scrape + interval, persisted)
+  4. Cache IOC extraction results in the DB (add an `iocs` JSON column to Threat) to avoid re-extraction on repeated dialog opens
+  5. Add a "scrape now" button per source in the sources panel with a confirmation + estimated duration
+  6. Persist watchlist + includeRejected state to localStorage (currently only filters persist)
+  7. Add a threat-actor profile page (click an actor in the spotlight to see all their threats + IOCs)
+

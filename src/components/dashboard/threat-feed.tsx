@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download, Star, Link2, Loader2 } from "lucide-react";
+import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download, Star, Link2, Loader2, Fingerprint, Copy, Check } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { Threat, RelatedThreat } from "./types";
+import type { Threat, RelatedThreat, IOCsResult } from "./types";
 import { SEVERITY_META, sourceTypeMeta, fmtDate } from "./types";
 
 export function ThreatDetailDialog({
@@ -29,14 +29,23 @@ export function ThreatDetailDialog({
 }) {
   const [related, setRelated] = useState<RelatedThreat[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
+  const [iocs, setIocs] = useState<IOCsResult | null>(null);
+  const [iocsLoading, setIocsLoading] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
     if (!threat || !open) {
-      queueMicrotask(() => setRelated([]));
+      queueMicrotask(() => {
+        setRelated([]);
+        setIocs(null);
+      });
       return;
     }
     let cancelled = false;
-    queueMicrotask(() => setRelatedLoading(true));
+    queueMicrotask(() => {
+      setRelatedLoading(true);
+      setIocsLoading(true);
+    });
     fetch(`/api/threats/${threat.id}/related`)
       .then((r) => r.json())
       .then((json) => {
@@ -48,10 +57,28 @@ export function ThreatDetailDialog({
       .finally(() => {
         if (!cancelled) setRelatedLoading(false);
       });
+    fetch(`/api/threats/${threat.id}/iocs`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled) setIocs(json.iocs ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setIocs(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIocsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
   }, [threat, open]);
+
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1200);
+    });
+  };
 
   if (!threat) return null;
   const sev = SEVERITY_META[threat.severity];
@@ -136,6 +163,36 @@ export function ThreatDetailDialog({
               </div>
             </div>
 
+            {/* IOCs section */}
+            {(iocsLoading || iocs) && (
+              <div>
+                <h4 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  <Fingerprint className="h-3.5 w-3.5 text-fuchsia-400" /> Indicators of Compromise
+                  {iocs && iocs.method !== "none" && (
+                    <Badge variant="outline" className="h-4 border-slate-600 px-1 text-[9px] text-slate-400">
+                      {iocs.method === "llm" ? "LLM-extracted" : "regex fallback"}
+                    </Badge>
+                  )}
+                </h4>
+                {iocsLoading ? (
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Extracting IOCs…
+                  </div>
+                ) : iocs && hasAnyIoc(iocs) ? (
+                  <div className="space-y-2">
+                    <IocGroup label="CVEs" items={iocs.cves} color="rose" onCopy={copyToClipboard} copied={copied} prefix="cve" />
+                    <IocGroup label="Threat Actors" items={iocs.actors} color="amber" onCopy={copyToClipboard} copied={copied} prefix="actor" />
+                    <IocGroup label="Data Types" items={iocs.dataTypes} color="cyan" onCopy={copyToClipboard} copied={copied} prefix="dt" />
+                    <IocGroup label="Components" items={iocs.components} color="emerald" onCopy={copyToClipboard} copied={copied} prefix="comp" />
+                    <IocGroup label="Countries" items={iocs.countries} color="teal" onCopy={copyToClipboard} copied={copied} prefix="co" />
+                    <IocGroup label="Other IOCs" items={iocs.misc} color="slate" onCopy={copyToClipboard} copied={copied} prefix="misc" />
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500">No IOCs detected in this threat description.</p>
+                )}
+              </div>
+            )}
+
             <div className="flex items-center justify-between border-t border-slate-800 pt-3">
               <span className="font-mono text-[10px] text-slate-500">
                 Source: {threat.sourceName} · discovered {fmtDate(threat.discoveredAt)}
@@ -194,6 +251,66 @@ export function ThreatDetailDialog({
         </ScrollArea>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function hasAnyIoc(iocs: IOCsResult): boolean {
+  return Boolean(
+    iocs.cves.length || iocs.actors.length || iocs.dataTypes.length || iocs.components.length || iocs.countries.length || iocs.misc.length,
+  );
+}
+
+const IOC_COLOR_MAP: Record<string, string> = {
+  rose: "border-rose-500/30 bg-rose-500/10 text-rose-200 hover:border-rose-500/50",
+  amber: "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:border-amber-500/50",
+  cyan: "border-cyan-500/30 bg-cyan-500/10 text-cyan-200 hover:border-cyan-500/50",
+  emerald: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-500/50",
+  teal: "border-teal-500/30 bg-teal-500/10 text-teal-200 hover:border-teal-500/50",
+  slate: "border-slate-600 bg-slate-700/30 text-slate-200 hover:border-slate-500",
+};
+
+function IocGroup({
+  label,
+  items,
+  color,
+  onCopy,
+  copied,
+  prefix,
+}: {
+  label: string;
+  items: string[];
+  color: string;
+  onCopy: (text: string, key: string) => void;
+  copied: string | null;
+  prefix: string;
+}) {
+  if (items.length === 0) return null;
+  const tone = IOC_COLOR_MAP[color] ?? IOC_COLOR_MAP.slate;
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-0.5 w-24 shrink-0 text-[10px] uppercase tracking-wider text-slate-500">{label}</span>
+      <div className="flex flex-wrap gap-1">
+        {items.map((item, i) => {
+          const key = `${prefix}-${i}-${item}`;
+          const isCopied = copied === key;
+          return (
+            <button
+              key={key}
+              onClick={() => onCopy(item, key)}
+              className={`group inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${tone}`}
+              title={`Copy "${item}"`}
+            >
+              {item}
+              {isCopied ? (
+                <Check className="h-2.5 w-2.5 text-emerald-300" />
+              ) : (
+                <Copy className="h-2.5 w-2.5 opacity-50 transition-opacity group-hover:opacity-100" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
