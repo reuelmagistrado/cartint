@@ -282,11 +282,12 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
     }
   } catch {}
 
-  const cardsToEnrich = cards.slice(0, 15);
-  const cvssScores = await mapWithConcurrency(cardsToEnrich, async (c) => fetchCvssForAdvisory(c.href), 2);
-
-  for (let i = 0; i < cards.length; i++) {
-    const { href, inner } = cards[i];
+  // Note: we do NOT fetch detail pages for CVSS scores during the scrape —
+  // that added 30-60s and caused the scrape to time out with 0 results.
+  // Instead we use ASRG's listing severity label (which ASRG already derives
+  // from the CVSS score) as the suggestedSeverity. This keeps the adapter
+  // fast (~5s for the listing page) so the scrape completes successfully.
+  for (const { href, inner } of cards) {
     const cveIdMatch = inner.match(/(CVE-\d{4}-\d{4,7})/i);
     const cveId = cveIdMatch ? cveIdMatch[1].toUpperCase() : null;
     const sevMatch = inner.match(/CVE-\d{4}-\d{4,7}\s+(Critical|High|Medium|Low)/i);
@@ -297,10 +298,9 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
     const affected = affectedMatch ? affectedMatch[1].trim() : "";
     const dateMatch = inner.match(/([A-Z][a-z]{2,9}\s+\d{1,2},\s+\d{4})/);
     const dateStr = dateMatch ? dateMatch[1] : undefined;
-    const cvssScore = i < cvssScores.length ? cvssScores[i] : null;
-    const suggestedSeverity: RawItem["suggestedSeverity"] = cvssScore !== null ? cvssToSeverity(cvssScore) : listingSeverity;
+    const suggestedSeverity: RawItem["suggestedSeverity"] = listingSeverity;
     const displayTitle = cveId ? `${cveId} — ${title}` : title;
-    const description = affected ? `${title}. Affected: ${affected}${cvssScore !== null ? `. CVSS 3.1 base score: ${cvssScore} (${suggestedSeverity}).` : ""}` : title;
+    const description = affected ? `${title}. Affected: ${affected}` : title;
     items.push({
       externalId: `asrg:${href}`,
       title: displayTitle.slice(0, 200),
@@ -311,7 +311,7 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
       attackDate: dateStr ? new Date(dateStr).toISOString() : new Date().toISOString(),
       dataTypes: "vulnerability",
       suggestedSeverity,
-      rawJson: JSON.stringify({ cveId, cvssScore, severity: suggestedSeverity, listingSeverity, href, dateStr }).slice(0, 2000),
+      rawJson: JSON.stringify({ cveId, severity: suggestedSeverity, href, dateStr }).slice(0, 2000),
     });
   }
   return items.slice(0, 40);
