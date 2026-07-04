@@ -28,7 +28,6 @@ import { useThreatStream, type ThreatStreamEvent } from "@/hooks/use-threat-stre
 import { useWatchdogStatus } from "@/hooks/use-watchdog-status";
 import { KpiCards } from "@/components/dashboard/kpi-cards";
 import { TrendChart } from "@/components/dashboard/trend-chart";
-import { BreakdownCharts } from "@/components/dashboard/breakdown-charts";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { AtmMatrix } from "@/components/dashboard/atm-matrix";
 import { ThreatFeed, ThreatDetailDialog } from "@/components/dashboard/threat-feed";
@@ -238,6 +237,7 @@ export default function Home() {
     },
     {
       key: "?",
+      shift: true,
       description: "Show keyboard shortcuts help",
       handler: () => setShortcutsOpen((v) => !v),
     },
@@ -278,9 +278,6 @@ export default function Home() {
             <div>
               <h1 className="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-50">
                 CARTINT
-                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-                  v2
-                </span>
               </h1>
               <p className="text-[11px] text-slate-400">
                 Automotive Threat Intelligence · Dark-Web OSINT · Auto-ISAC ATM
@@ -383,7 +380,7 @@ export default function Home() {
               </div>
               <div>
                 <p className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-                  Multi-source dark-web monitoring — no longer ransomware.live only
+                  Multi-source dark-web monitoring
                   <span className="hidden items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 sm:inline-flex">
                     <Sparkles className="h-3 w-3" />
                     Powered by LLM classification
@@ -474,16 +471,15 @@ export default function Home() {
         {/* ATM matrix full width */}
         <AtmMatrix tactics={atm.tactics} maxCount={atm.maxCount} loading={loading} />
 
-        {/* Breakdown charts */}
-        <BreakdownCharts stats={stats} />
 
         {/* Scrape history + false-positive trend */}
         <ScrapeHistoryChart />
 
-        {/* World map (full width) + Threat actor spotlight + severity donut */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <div className="lg:col-span-2">
+        {/* World map + scrape schedule (left col) / actor spotlight + severity donut (right col) */}
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+          <div className="flex flex-col gap-4 lg:col-span-2">
             <WorldMap stats={stats} />
+            <ScrapeSchedulePanel />
           </div>
           <div className="space-y-4">
             <ActorSpotlight
@@ -511,8 +507,6 @@ export default function Home() {
           <ReportGenerator reports={reports} onRefresh={loadOverview} />
         </div>
 
-        {/* Scrape schedule config */}
-        <ScrapeSchedulePanel />
       </main>
 
       {/* Footer (sticky) */}
@@ -521,7 +515,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-3.5 w-3.5 text-emerald-500/70" />
             <span>
-              CARTINT v2 — Automotive Threat Intelligence · {stats?.totalThreats ?? 0} active threats ·{" "}
+              CARTINT — Automotive Threat Intelligence · {stats?.totalThreats ?? 0} active threats ·{" "}
               {stats?.falsePositiveRate ?? 0}% false-positive rejection
             </span>
           </div>

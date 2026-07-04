@@ -87,7 +87,7 @@ export async function scrapeSource(name: string): Promise<ScrapeResult> {
           victimSector: rawItem.victimSector ?? null,
           country: c.country ?? rawItem.country ?? null,
           attackDate: rawItem.attackDate ? new Date(rawItem.attackDate) : null,
-          severity: c.severity,
+          severity: rawItem.suggestedSeverity ?? c.severity,
           isAutomotive: c.isAutomotive,
           relevanceScore: c.relevanceScore,
           automotiveCategory: c.automotiveCategory ?? null,

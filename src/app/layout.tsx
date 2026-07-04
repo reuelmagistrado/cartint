@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "CARTINT — Automotive Threat Intelligence",
-  description: "CARTINT v2: Automotive threat intelligence dashboard with multi-source dark-web OSINT scraping, LLM automotive-relevance classification (zero false positives), and Auto-ISAC ATM matrix mapping.",
+  description: "CARTINT: Automotive threat intelligence dashboard with multi-source dark-web OSINT scraping, LLM automotive-relevance classification (zero false positives), and Auto-ISAC ATM matrix mapping.",
   keywords: ["CARTINT", "automotive threat intelligence", "dark web", "OSINT", "Auto-ISAC", "ATM", "connected vehicle", "CTI"],
   authors: [{ name: "CARTINT" }],
   icons: {

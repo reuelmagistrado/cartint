@@ -176,7 +176,7 @@ export function sourceTypeMeta(type: string): { label: string; tone: string } {
     case "security-rss":
       return { label: "Security News (dark-web reporting)", tone: "text-cyan-300 bg-cyan-500/10 border-cyan-500/30" };
     case "cve":
-      return { label: "Vulnerability (NVD)", tone: "text-teal-300 bg-teal-500/10 border-teal-500/30" };
+      return { label: "Vulnerability (ASRG)", tone: "text-teal-300 bg-teal-500/10 border-teal-500/30" };
     default:
       return { label: type, tone: "text-slate-300 bg-slate-500/10 border-slate-500/30" };
   }

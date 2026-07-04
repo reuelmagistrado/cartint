@@ -25,7 +25,9 @@ function isTypingTarget(el: EventTarget | null): boolean {
 export function useKeyboardShortcuts(shortcuts: ShortcutDef[]) {
   const stableRef = useCallback((e: KeyboardEvent) => {
     for (const s of shortcuts) {
-      const keyMatches = e.key.toLowerCase() === s.key.toLowerCase();
+      const keyMatches =
+        e.key.toLowerCase() === s.key.toLowerCase() ||
+        (s.key === "?" && s.shift && e.shiftKey && e.key === "/");
       if (!keyMatches) continue;
       if (!!s.ctrl !== (e.ctrlKey || e.metaKey && false)) {
         // treat ctrl OR meta as the "ctrl" modifier for cross-platform convenience

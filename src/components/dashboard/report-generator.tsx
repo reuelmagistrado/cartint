@@ -221,7 +221,7 @@ function renderReportHtml(report: Report): string {
   </div>
   ${body}
   <div class="footer">
-    CARTINT v2 · Dark-web OSINT · LLM-classified · Auto-ISAC ATM · Confidential — for authorized analyst use only.
+    CARTINT · Dark-web OSINT · LLM-classified · Auto-ISAC ATM · Confidential — for authorized analyst use only.
   </div>
 </body></html>`;
 }

@@ -5,7 +5,7 @@
 //   1. ransomware.live API          — ransomware leak sites (filtered hard for automotive)
 //   2. ahmia-darkweb                — REAL Tor hidden-service search via the Ahmia clearnet gateway
 //   3. security-rss                 — BleepingComputer / DarkReading / HackerNews dark-web breach reporting
-//   4. nvd-cve                      — NIST NVD automotive / vehicle / CAN-bus CVEs
+//   4. asrg-advisories              — ASRG (Automotive Security Research Group) curated automotive CVEs
 //   5. darkforum-intel              — dark-web forum & marketplace monitoring (analyst-curated Tor intel)
 //
 // Each adapter returns RawItem[]; the orchestrator runs them through the LLM
@@ -50,10 +50,10 @@ export const SOURCE_DEFS: SourceDef[] = [
     isDarkWeb: false,
   },
   {
-    name: "nvd-cve",
+    name: "asrg-advisories",
     type: "cve",
-    url: "https://services.nvd.nist.gov/rest/json/cves/2.0",
-    description: "NIST NVD CVEs for automotive / vehicle / CAN-bus / ECU / telematics components.",
+    url: "https://www.asrg.io/security-advisories",
+    description: "ASRG (Automotive Security Research Group) security advisories — curated automotive CVEs with affected products.",
     isDarkWeb: false,
   },
   {
@@ -227,41 +227,94 @@ export async function fetchSecurityRss(sourceName: string, feedUrl: string): Pro
   return items;
 }
 
-// 4) NVD CVE — automotive / vehicle / CAN-bus CVEs.
-export async function fetchNvdCve(): Promise<RawItem[]> {
-  const queries = ["automotive", "vehicle", "CAN bus", "ECU"];
+// 4) ASRG (Automotive Security Research Group) security advisories.
+//    Replaces the previous NVD CVE source. ASRG publishes curated automotive
+//    CVEs with affected products at https://www.asrg.io/security-advisories.
+//    For each advisory we also fetch its detail page to extract the CVSS 3.1
+//    base score and derive the severity from it (CVSS: 9.0-10 Critical,
+//    7.0-8.9 High, 4.0-6.9 Medium, 0.1-3.9 Low).
+function cvssToSeverity(score: number): "critical" | "high" | "medium" | "low" {
+  if (score >= 9.0) return "critical";
+  if (score >= 7.0) return "high";
+  if (score >= 4.0) return "medium";
+  return "low";
+}
+
+function extractCvssScore(html: string): number | null {
+  const text = stripHtml(html);
+  const m = text.match(/CVSS\s*3\.1\s+(\d+(?:\.\d+)?)\s*CVSS:3\.1\//i);
+  if (m) return parseFloat(m[1]);
+  const m4 = text.match(/CVSS\s*4\.0\s+(\d+(?:\.\d+)?)\s*CVSS:4\.0\//i);
+  if (m4) return parseFloat(m4[1]);
+  return null;
+}
+
+async function fetchCvssForAdvisory(href: string): Promise<number | null> {
+  try {
+    const html = await readPage(`https://www.asrg.io${href}`);
+    if (!html) return null;
+    return extractCvssScore(html);
+  } catch { return null; }
+}
+
+async function mapWithConcurrency<T, R>(arr: T[], fn: (item: T, index: number) => Promise<R>, concurrency: number): Promise<R[]> {
+  const results: R[] = new Array(arr.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, arr.length) }, async () => {
+    while (true) { const i = next++; if (i >= arr.length) break; results[i] = await fn(arr[i], i); }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
   const items: RawItem[] = [];
-  for (const q of queries) {
-    try {
-      const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(q)}&resultsPerPage=10`;
-      const res = await fetchWithTimeout(url, {}, 12000);
-      if (!res.ok) continue;
-      const json = (await res.json()) as Record<string, unknown>;
-      const vulns = (json.vulnerabilities ?? []) as Array<Record<string, unknown>>;
-      for (const v of vulns) {
-        const cve = (v.cve ?? {}) as Record<string, unknown>;
-        const id = String(cve.id ?? "");
-        const descriptions = (cve.descriptions ?? []) as Array<Record<string, unknown>>;
-        const en = descriptions.find((d) => d.lang === "en") ?? descriptions[0];
-        const value = en ? String(en.value ?? "") : "";
-        const published = cve.published ? String(cve.published) : undefined;
-        items.push({
-          externalId: `nvd:${id}`,
-          title: `${id} — ${value.slice(0, 120)}`,
-          description: value.slice(0, 800),
-          sourceName: "nvd-cve",
-          sourceType: "cve",
-          sourceUrl: `https://nvd.nist.gov/vuln/detail/${id}`,
-          attackDate: published,
-          dataTypes: "vulnerability",
-          rawJson: JSON.stringify({ id, published }).slice(0, 2000),
-        });
-      }
-    } catch {
-      // NVD is often slow/rate-limited; continue.
+  let cards: { href: string; inner: string }[] = [];
+  try {
+    const html = await readPage("https://www.asrg.io/security-advisories");
+    if (!html) return items;
+    const cardRe = /<a[^>]*href="(\/security-advisories\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    let match: RegExpExecArray | null;
+    while ((match = cardRe.exec(html)) !== null) {
+      const href = match[1];
+      const inner = stripHtml(match[2]);
+      if (inner) cards.push({ href, inner });
     }
+  } catch {}
+
+  const cardsToEnrich = cards.slice(0, 15);
+  const cvssScores = await mapWithConcurrency(cardsToEnrich, async (c) => fetchCvssForAdvisory(c.href), 2);
+
+  for (let i = 0; i < cards.length; i++) {
+    const { href, inner } = cards[i];
+    const cveIdMatch = inner.match(/(CVE-\d{4}-\d{4,7})/i);
+    const cveId = cveIdMatch ? cveIdMatch[1].toUpperCase() : null;
+    const sevMatch = inner.match(/CVE-\d{4}-\d{4,7}\s+(Critical|High|Medium|Low)/i);
+    const listingSeverity = sevMatch ? sevMatch[1].toLowerCase() as "critical" | "high" | "medium" | "low" : undefined;
+    const titleMatch = inner.match(/(?:Critical|High|Medium|Low)\s+(.+?)(?:\s+Affected:|$)/i);
+    const title = titleMatch ? titleMatch[1].trim() : (cveId ?? href.split("/").pop() ?? "ASRG advisory");
+    const affectedMatch = inner.match(/Affected:\s*(.+?)(?:\s+[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}|$)/);
+    const affected = affectedMatch ? affectedMatch[1].trim() : "";
+    const dateMatch = inner.match(/([A-Z][a-z]{2,9}\s+\d{1,2},\s+\d{4})/);
+    const dateStr = dateMatch ? dateMatch[1] : undefined;
+    const cvssScore = i < cvssScores.length ? cvssScores[i] : null;
+    const suggestedSeverity: RawItem["suggestedSeverity"] = cvssScore !== null ? cvssToSeverity(cvssScore) : listingSeverity;
+    const displayTitle = cveId ? `${cveId} — ${title}` : title;
+    const description = affected ? `${title}. Affected: ${affected}${cvssScore !== null ? `. CVSS 3.1 base score: ${cvssScore} (${suggestedSeverity}).` : ""}` : title;
+    items.push({
+      externalId: `asrg:${href}`,
+      title: displayTitle.slice(0, 200),
+      description: description.slice(0, 800),
+      sourceName: "asrg-advisories",
+      sourceType: "cve",
+      sourceUrl: `https://www.asrg.io${href}`,
+      attackDate: dateStr ? new Date(dateStr).toISOString() : new Date().toISOString(),
+      dataTypes: "vulnerability",
+      suggestedSeverity,
+      rawJson: JSON.stringify({ cveId, cvssScore, severity: suggestedSeverity, listingSeverity, href, dateStr }).slice(0, 2000),
+    });
   }
-  return items.slice(0, 25);
+  return items.slice(0, 40);
 }
 
 // 5) darkforum-intel — analyst-curated Tor forum / marketplace monitoring.
@@ -368,7 +421,7 @@ export async function runSource(name: string): Promise<RawItem[]> {
     case "ahmia-darkweb": return fetchAhmia();
     case "bleepingcomputer": return fetchSecurityRss("bleepingcomputer", "https://www.bleepingcomputer.com/feed/");
     case "thehackernews": return fetchSecurityRss("thehackernews", "https://feeds.feedburner.com/TheHackersNews");
-    case "nvd-cve": return fetchNvdCve();
+    case "asrg-advisories": return fetchAsrgAdvisories();
     case "darkforum-intel": return fetchDarkForumIntel();
     default: return [];
   }

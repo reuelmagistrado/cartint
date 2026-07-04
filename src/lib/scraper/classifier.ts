@@ -20,6 +20,7 @@ export type RawItem = {
   actor?: string;
   dataTypes?: string;
   rawJson?: string;
+  suggestedSeverity?: "critical" | "high" | "medium" | "low";
 };
 
 export type Classification = {
