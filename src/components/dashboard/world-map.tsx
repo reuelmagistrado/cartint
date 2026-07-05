@@ -6,7 +6,7 @@ import { ComposableMap, Geographies, Geography } from "react-simple-maps";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Globe2, Loader2 } from "lucide-react";
+import { Globe2 } from "lucide-react";
 import type { Stats } from "./types";
 
 // World-atlas TopoJSON — loaded from a CDN at runtime. react-simple-maps
@@ -72,7 +72,6 @@ function heatFill(ratio: number): string {
 
 export function WorldMap({ stats }: { stats: Stats | null }) {
   const [geoError, setGeoError] = useState(false);
-  const [geoLoaded, setGeoLoaded] = useState(false);
 
   const countryData = useMemo(() => {
     const byName = new Map<string, number>();
@@ -119,11 +118,6 @@ export function WorldMap({ stats }: { stats: Stats | null }) {
 
       {!geoError ? (
         <div className="relative h-[260px] w-full overflow-hidden rounded-lg bg-slate-950/40">
-          {!geoLoaded && (
-            <div className="absolute inset-0 flex items-center justify-center text-[11px] text-slate-500">
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Loading world map…
-            </div>
-          )}
           <ComposableMap
             projectionConfig={{ scale: 130, center: [0, 20] }}
             width={760}
@@ -132,14 +126,13 @@ export function WorldMap({ stats }: { stats: Stats | null }) {
           >
             <Geographies geography={GEO_URL}>
               {({ geographies }: { geographies: Array<{ id: string; properties: { name: string } }> }) => {
-                setGeoLoaded(true);
                 return geographies.map((geo) => {
                   const id = parseInt(geo.id, 10);
                   const data = countryData.byId.get(id);
                   const count = data?.count ?? 0;
                   const ratio = count / maxCount;
                   return (
-                    <TooltipProvider key={geo.id} delayDuration={80}>
+                    <TooltipProvider key={geo.id || `geo-${id}`} delayDuration={80}>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Geography
