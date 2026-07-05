@@ -664,3 +664,34 @@ Work Log:
 
 Stage Summary:
 - Threat detail modal now has a working vertical scrollbar. Content that exceeds the modal height (Description, InfoRows, ATM Mapping, IOCs, Related Threats, source footer) is reachable by scrolling. No horizontal overflow. Works at desktop and short mobile viewports.
+
+---
+Task ID: 30 (dark-web scraper + RansomLook health monitor)
+Agent: main (Z.ai Code)
+Task: Implement dark-web scraping with LLM false-positive filtering (Robin-style pipeline) + RansomLook health monitoring.
+
+Work Log:
+- Installed deps: socks-proxy-agent (Tor SOCKS5 proxy), cheerio (HTML parsing).
+- Created .env + .env.example with all config vars: Tor (TOR_SOCKS_HOST/PORT), LLM (OPENAI/ANTHROPIC/GOOGLE/OLLAMA), RansomLook (RANSOMLOOK_API_URL/KEY), scraper settings (MAX_DOWNLOAD_BYTES, MAX_EXTRACTED_TEXT, MAX_RETURN_CHARS, SCRAPE_TIMEOUT_TOR, SCRAPE_MAX_WORKERS, SEARCH_MAX_WORKERS).
+
+- Part 1: Dark-Web Scraper (Robin-style 3-stage pipeline)
+  * src/lib/scraper/tor.ts — Tor SOCKS5 proxy helper: socks5h://127.0.0.1:9050 agent, 9 rotating User-Agents, 3 retries with 0.5 backoff on 500/502/503/504, 1MB download cap, HTML content-type filtering, .onion detection, clearnet fallback. Uses socks-proxy-agent with Node's https module for .onion URLs.
+  * src/lib/scraper/darkweb-search.ts — Search module: 6 dark-web search engines (Ahmia, OnionLand, Tor66, Torgle, Kaizer, DarkSearch) with .onion URLs + clearnet fallbacks. cheerio HTML parsing, .onion link extraction, dedup by URL (strip trailing slashes), concurrent search (max_workers=5). Returns {title, link}[].
+  * src/lib/scraper/darkweb-scrape.ts — Scrape module: fetches .onion pages via Tor, extracts clean text with cheerio (removes script/style/noscript/iframe/svg), normalizes whitespace, caps at 50K chars extracted / 2000 chars returned, concurrent scraping (max_workers=5), URL dedup.
+  * src/lib/scraper/darkweb-llm-filter.ts — LLM filter (3 steps): (1) Query Refinement — refines user query to ≤5 words for dark-web search engines (Robin's system prompt). (2) Result Filtering — LLM selects top 20 most relevant results from all search results. (3) Automotive Relevance Classification — CARTINT-specific: classifies each scraped page for automotive_relevant, confidence (0-100), false_positive check, extracts threat_actor/victim/country/data_types/atm_tactic/reasoning as JSON. Acceptance gate: automotive_relevant==true AND false_positive==false AND confidence>=70.
+  * src/lib/scraper/darkweb-pipeline.ts — Orchestrator: full pipeline (refine → search → filter → RansomLook health check → scrape → classify → accept). Checks Tor availability first. For each result URL matching a known ransomware group, checks RansomLook health and skips mirrors with <50% uptime. Returns DarkwebScrapeResult with progress events.
+
+- Part 2: RansomLook Health Monitor
+  * src/lib/scraper/ransomlook.ts — Full RansomLook API client: checkGroupHealth (30-day uptime, best mirror selection), getGroupPosts, searchRansomLook, getRecentPosts, getPostsByDays, getHotGroups, getStats, compareGroups, extractGroupNameFromOnion.
+  * API endpoints: /api/ransomlook/health?name=, /api/ransomlook/search?q=, /api/ransomlook/stats.
+  * API endpoint: /api/darkweb-search (POST, runs full pipeline with custom query, 5min timeout).
+
+- Part 3: Integration
+  * Added 'darkweb-scraper' source to SOURCE_DEFS + runSource switch (uses default automotive query; custom queries via /api/darkweb-search).
+  * Added sourceTypeMeta label "Dark-Web Scraper (Tor)" for the new source type.
+  * Seeded the source in the DB.
+
+- Verified: RansomLook /api/stats returns 584 groups, 545 online. /api/search?q=automotive returns relevant results (incl. Colossus ransomware attacking a US automotive group). Dashboard shows the darkweb-scraper source. Lint clean; tsc clean for src/; no runtime errors.
+
+Stage Summary:
+- Full Robin-style dark-web scraper pipeline implemented: search (6 .onion engines via Tor) → scrape (1MB cap, text extraction) → LLM filter (query refinement + result filtering + automotive relevance classification with false-positive check). RansomLook health monitor integrated to check mirror uptime before scraping. All configurable via .env (Tor, LLM, RansomLook, scraper settings). Designed for local/git-clone/Docker deployment (not public web).

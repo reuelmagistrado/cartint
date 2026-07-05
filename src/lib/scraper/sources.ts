@@ -63,6 +63,13 @@ export const SOURCE_DEFS: SourceDef[] = [
     description: "Dark-web forum & marketplace monitoring for vehicle data sales, ECU exploit kits, and OTA/telematics access. Analyst-curated Tor intelligence stream.",
     isDarkWeb: true,
   },
+  {
+    name: "darkweb-scraper",
+    type: "darkweb-scraper",
+    url: "tor://darkweb-search-engines (Robin-style pipeline)",
+    description: "Live dark-web scraper: searches Tor hidden services → scrapes pages → LLM automotive-relevance filter. Requires Tor (SOCKS5 :9050). Inspired by the Robin project.",
+    isDarkWeb: true,
+  },
 ];
 
 // ---- Fetch helpers ----------------------------------------------------------
@@ -423,6 +430,13 @@ export async function runSource(name: string): Promise<RawItem[]> {
     case "thehackernews": return fetchSecurityRss("thehackernews", "https://feeds.feedburner.com/TheHackersNews");
     case "asrg-advisories": return fetchAsrgAdvisories();
     case "darkforum-intel": return fetchDarkForumIntel();
+    case "darkweb-scraper": {
+      // Run the full dark-web pipeline with a default automotive query.
+      // For custom queries, use the /api/darkweb-search endpoint.
+      const { runDarkwebPipeline } = await import("./darkweb-pipeline");
+      const result = await runDarkwebPipeline("automotive ECU exploit vehicle data");
+      return result.threats;
+    }
     default: return [];
   }
 }
