@@ -126,13 +126,13 @@ export function WorldMap({ stats }: { stats: Stats | null }) {
           >
             <Geographies geography={GEO_URL}>
               {({ geographies }: { geographies: Array<{ id: string; properties: { name: string } }> }) => {
-                return geographies.map((geo) => {
+                return geographies.map((geo, idx) => {
                   const id = parseInt(geo.id, 10);
                   const data = countryData.byId.get(id);
                   const count = data?.count ?? 0;
                   const ratio = count / maxCount;
                   return (
-                    <TooltipProvider key={geo.id || `geo-${id}`} delayDuration={80}>
+                    <TooltipProvider key={geo.id || `geo-${idx}`} delayDuration={80}>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Geography
