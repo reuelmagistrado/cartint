@@ -166,7 +166,8 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
     const searchTerms = [
       "automotive", "vehicle", "car dealer", "automaker", "fleet",
       "charging station", "telematics", "tire", "motorcycle", "truck",
-      "Tier-1 supplier", "auto parts", "dealership",
+      "trucking", "transport", "logistics", "Tier-1 supplier", "auto parts",
+      "dealership", "EV charger", "connected vehicle",
     ];
 
     const allPosts: { group_name?: string; post_title: string; post_url?: string; description?: string; timestamp?: string; searchTerm: string }[] = [];
@@ -174,7 +175,8 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
       try {
         const result = await searchRansomLook(term);
         if (result.posts) {
-          for (const p of result.posts) {
+          // Take up to 15 results per search term (not all — some terms return 100+)
+          for (const p of result.posts.slice(0, 15)) {
             allPosts.push({ ...p, searchTerm: term });
           }
         }
@@ -194,28 +196,35 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
       }
     }
 
-    // Pre-filter with automotive keywords to reduce LLM calls
+    // Pre-filter with automotive keywords to reduce LLM calls.
+    // Use a stricter check: require the keyword in the title or description
+    // (not just the group name, which could be a false match).
     const autoPosts = dedupedPosts.filter((p) => {
-      const text = `${p.post_title || ""} ${p.description || ""} ${p.group_name || ""}`;
+      const text = `${p.post_title || ""} ${p.description || ""}`.toLowerCase();
       return mentionsAuto(text);
     });
 
     // For each automotive-relevant post, check the group's mirror health.
     // Only include posts from groups with available mirrors (uptime > 50%).
-    for (const post of autoPosts.slice(0, 30)) {
+    // When the post has no direct URL, construct one from the group's best mirror
+    // (the .onion address from the health check).
+    for (const post of autoPosts.slice(0, 50)) {
       if (!post.group_name) continue;
       const health = await checkGroupHealth(post.group_name);
       if (health.available || health.avg_uptime_30d > 50) {
         const extId = `darkweb:rl:${post.group_name}:${post.post_title?.slice(0, 50)}`;
         if (seen.has(extId)) continue;
         seen.add(extId);
+        // Build the source URL: use the post_url if available, otherwise
+        // link to the group's best mirror (.onion leak site).
+        const sourceUrl = post.post_url || health.best_mirror || undefined;
         items.push({
           externalId: extId,
           title: `${post.post_title} — ransomware leak (${post.group_name})`,
           description: post.description || post.post_title || `Ransomware group ${post.group_name} claims breach of ${post.post_title}.`,
           sourceName: "darkweb",
           sourceType: "darkweb",
-          sourceUrl: post.post_url || health.best_mirror || undefined,
+          sourceUrl,
           victimOrg: post.post_title,
           actor: post.group_name,
           attackDate: post.timestamp || new Date().toISOString(),
@@ -225,6 +234,7 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
             group: post.group_name,
             searchTerm: post.searchTerm,
             health: { available: health.available, uptime: health.avg_uptime_30d, bestMirror: health.best_mirror },
+            description: post.description,
           }).slice(0, 2000),
         });
       }
