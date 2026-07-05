@@ -21,16 +21,52 @@ export type ScrapeResult = {
 
 export async function ensureSourcesSeeded() {
   const count = await db.source.count();
-  if (count > 0) return;
-  await db.source.createMany({
-    data: SOURCE_DEFS.map((s) => ({
-      name: s.name,
-      type: s.type,
-      url: s.url,
-      description: s.description,
-      isDarkWeb: s.isDarkWeb,
-      enabled: true,
-    })),
+  if (count === 0) {
+    // Fresh DB — seed all sources from SOURCE_DEFS
+    await db.source.createMany({
+      data: SOURCE_DEFS.map((s) => ({
+        name: s.name,
+        type: s.type,
+        url: s.url,
+        description: s.description,
+        isDarkWeb: s.isDarkWeb,
+        enabled: true,
+      })),
+    });
+    return;
+  }
+  // Sync: add any new sources from SOURCE_DEFS that aren't in the DB yet,
+  // and remove any DB sources that are no longer in SOURCE_DEFS.
+  const dbSources = await db.source.findMany({ select: { name: true } });
+  const dbNames = new Set(dbSources.map((s) => s.name));
+  const defNames = new Set(SOURCE_DEFS.map((s) => s.name));
+
+  // Create missing sources
+  const toCreate = SOURCE_DEFS.filter((s) => !dbNames.has(s.name));
+  if (toCreate.length > 0) {
+    await db.source.createMany({
+      data: toCreate.map((s) => ({
+        name: s.name,
+        type: s.type,
+        url: s.url,
+        description: s.description,
+        isDarkWeb: s.isDarkWeb,
+        enabled: true,
+      })),
+    });
+  }
+
+  // Remove stale sources (no longer in SOURCE_DEFS) + their threats + scrape logs
+  const toRemove = [...dbNames].filter((n) => !defNames.has(n));
+  for (const name of toRemove) {
+    await db.threat.deleteMany({ where: { sourceName: name } });
+    await db.scrapeLog.deleteMany({ where: { sourceName: name } });
+    try { await db.source.delete({ where: { name } }); } catch { /* already gone */ }
+  }
+
+  // Also clean up stale scrape logs from removed sources
+  await db.scrapeLog.deleteMany({
+    where: { sourceName: { notIn: [...defNames] } },
   });
 }
 
