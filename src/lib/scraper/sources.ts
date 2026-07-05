@@ -145,43 +145,87 @@ export async function fetchRansomwareLive(): Promise<RawItem[]> {
   return items.slice(0, 40);
 }
 
-// 2) darkweb — unified dark-web source (Robin-style Tor search + RansomLook).
+// 2) darkweb — unified dark-web source (RansomLook + Robin-style Tor search).
 //    This adapter runs TWO sub-pipelines, both LLM-filtered for automotive only:
-//      a. RansomLook: get recent posts from all groups → LLM filter for automotive
-//      b. Robin-style: search 6 .onion engines via Tor → LLM filter (only if Tor available)
+//      a. RansomLook: search for automotive terms → health-check groups → return posts
+//      b. Robin-style: search 6 .onion engines via Tor → scrape → LLM classify (only if Tor available)
 //    Both return results under sourceName "darkweb".
+//    The orchestrator's LLM classifier does the final false-positive filtering.
 export async function fetchDarkweb(): Promise<RawItem[]> {
   const items: RawItem[] = [];
+  const seen = new Set<string>(); // dedup by externalId
 
   // ── Sub-pipeline A: RansomLook leak-site monitoring ──────────────────────
-  // Get recent posts from RansomLook (clearnet API, works without Tor),
-  // then LLM-filter for automotive relevance only.
+  // Search RansomLook with automotive-specific terms (not just "recent" posts,
+  // which are mostly non-automotive). This finds targeted automotive victims.
   try {
-    const { getRecentPosts, checkGroupHealth } = await import("./ransomlook");
-    const posts = await getRecentPosts(100);
+    const { searchRansomLook, checkGroupHealth } = await import("./ransomlook");
+
+    // Search terms that find genuine automotive victims on leak sites.
+    // "car" is too broad (2121 results), so we use more specific terms.
+    const searchTerms = [
+      "automotive", "vehicle", "car dealer", "automaker", "fleet",
+      "charging station", "telematics", "tire", "motorcycle", "truck",
+      "Tier-1 supplier", "auto parts", "dealership",
+    ];
+
+    const allPosts: { group_name?: string; post_title: string; post_url?: string; description?: string; timestamp?: string; searchTerm: string }[] = [];
+    for (const term of searchTerms) {
+      try {
+        const result = await searchRansomLook(term);
+        if (result.posts) {
+          for (const p of result.posts) {
+            allPosts.push({ ...p, searchTerm: term });
+          }
+        }
+      } catch {
+        // individual search term may fail; continue
+      }
+    }
+
+    // Deduplicate by post_title + group_name
+    const dedupedPosts: typeof allPosts = [];
+    const seenPosts = new Set<string>();
+    for (const p of allPosts) {
+      const key = `${p.group_name}:${p.post_title}`;
+      if (!seenPosts.has(key)) {
+        seenPosts.add(key);
+        dedupedPosts.push(p);
+      }
+    }
+
     // Pre-filter with automotive keywords to reduce LLM calls
-    const autoPosts = posts.filter((p) => {
+    const autoPosts = dedupedPosts.filter((p) => {
       const text = `${p.post_title || ""} ${p.description || ""} ${p.group_name || ""}`;
       return mentionsAuto(text);
     });
-    // For each automotive-relevant post, check the group's mirror health
-    for (const post of autoPosts.slice(0, 20)) {
+
+    // For each automotive-relevant post, check the group's mirror health.
+    // Only include posts from groups with available mirrors (uptime > 50%).
+    for (const post of autoPosts.slice(0, 30)) {
       if (!post.group_name) continue;
       const health = await checkGroupHealth(post.group_name);
-      // Only include posts from groups with available mirrors (uptime > 50%)
       if (health.available || health.avg_uptime_30d > 50) {
+        const extId = `darkweb:rl:${post.group_name}:${post.post_title?.slice(0, 50)}`;
+        if (seen.has(extId)) continue;
+        seen.add(extId);
         items.push({
-          externalId: `darkweb:rl:${post.group_name}:${post.post_title?.slice(0, 50)}`,
-          title: post.post_title || `${post.group_name} leak post`,
-          description: post.description || post.post_title || `Post from ${post.group_name} ransomware group.`,
+          externalId: extId,
+          title: `${post.post_title} — ransomware leak (${post.group_name})`,
+          description: post.description || post.post_title || `Ransomware group ${post.group_name} claims breach of ${post.post_title}.`,
           sourceName: "darkweb",
           sourceType: "darkweb",
-          sourceUrl: post.post_url || undefined,
-          victimOrg: post.post_title?.split("—")[0]?.trim() || undefined,
+          sourceUrl: post.post_url || health.best_mirror || undefined,
+          victimOrg: post.post_title,
           actor: post.group_name,
-          attackDate: post.timestamp,
+          attackDate: post.timestamp || new Date().toISOString(),
           dataTypes: "claimed exfiltrated data",
-          rawJson: JSON.stringify({ source: "ransomlook", group: post.group_name, health: { available: health.available, uptime: health.avg_uptime_30d, bestMirror: health.best_mirror } }).slice(0, 2000),
+          rawJson: JSON.stringify({
+            source: "ransomlook",
+            group: post.group_name,
+            searchTerm: post.searchTerm,
+            health: { available: health.available, uptime: health.avg_uptime_30d, bestMirror: health.best_mirror },
+          }).slice(0, 2000),
         });
       }
     }
@@ -210,8 +254,11 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
           const classifications = await classifyBatch(pages);
           for (const { url, classification } of classifications) {
             if (isAccepted(classification) && classification) {
+              const extId = `darkweb:robin:${url}`;
+              if (seen.has(extId)) continue;
+              seen.add(extId);
               items.push({
-                externalId: `darkweb:robin:${url}`,
+                externalId: extId,
                 title: classification.victim
                   ? `${classification.victim} — dark-web threat (${classification.threat_actor || "unknown"})`
                   : `Dark-web threat — ${classification.threat_actor || "unknown"}`,
