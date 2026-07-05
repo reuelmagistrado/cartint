@@ -96,9 +96,36 @@ const AUTO_KEYWORDS = [
   "automaker", "auto parts", "rental car", "leasing",
 ];
 
+// Stricter keyword set for security RSS sources (BleepingComputer, HackerNews).
+// These sources cover ALL cybersecurity — generic terms like "fleet", "battery",
+// "wheel", "transit", "mobility" cause false positives (e.g., "fleet" in a
+// server-fleet context, "battery" in a laptop-battery context). This stricter
+// list requires unambiguous automotive signals.
+const RSS_AUTO_KEYWORDS = [
+  "automotive", "automaker", "car manufacturer", "car dealer", "dealership",
+  "connected car", "connected vehicle", "electric vehicle", "ev charging",
+  "charging station", "telematics", "ota update", "ota firmware",
+  "can bus", "can-bus", "ecu ", "electronic control unit",
+  "tier-1 supplier", "tier-2 supplier", "auto parts", "aftermarket",
+  "infotainment", "adas", "autonomous driving", "robotaxi",
+  "ride-hail", "ride-hailing", "car-sharing", "rental car",
+  "motorcycle", "self-driving", "self driving",
+  "vehicle security", "vehicle hack", "vehicle breach",
+  "car theft", "car hack", "car breach",
+  "truck", "trucking", "fleet management",
+  "software-defined vehicle", "sdv",
+  "evse", "ocpp", "csms",
+];
+
 function mentionsAuto(text: string): boolean {
   const lower = text.toLowerCase();
   return AUTO_KEYWORDS.some((k) => lower.includes(k));
+}
+
+// Stricter pre-filter for RSS sources — requires unambiguous automotive terms.
+function mentionsAutoRss(text: string): boolean {
+  const lower = text.toLowerCase();
+  return RSS_AUTO_KEYWORDS.some((k) => lower.includes(k));
 }
 
 // ---- Source adapters --------------------------------------------------------
@@ -271,7 +298,7 @@ export async function fetchSecurityRss(sourceName: string, feedUrl: string): Pro
     const pub = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1];
     const cleanDesc = stripHtml(desc);
     const text = `${title} ${cleanDesc}`;
-    if (!mentionsAuto(text)) continue;
+    if (!mentionsAutoRss(text)) continue;
     items.push({
       externalId: `${sourceName}:${link || title}`.slice(0, 200),
       title: stripHtml(title).slice(0, 180),
