@@ -282,32 +282,65 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
 
 // 3) Security RSS — generic parser used by bleepingcomputer & thehackernews.
 export async function fetchSecurityRss(sourceName: string, feedUrl: string): Promise<RawItem[]> {
-  const res = await fetchWithTimeout(feedUrl);
-  if (!res.ok) throw new Error(`${sourceName} HTTP ${res.status}`);
-  const xml = await res.text();
+  // Some feeds (e.g. BleepingComputer) are behind Cloudflare and return a
+  // challenge page instead of XML when fetched directly. Use the z-ai
+  // page_reader as a fallback if the direct fetch doesn't return valid XML.
+  let xml = "";
+  try {
+    const res = await fetchWithTimeout(feedUrl);
+    if (res.ok) {
+      const text = await res.text();
+      // Check if it's valid XML (RSS/Atom) and not a Cloudflare challenge page
+      if (text.includes("<item>") || text.includes("<entry>")) {
+        xml = text;
+      }
+    }
+  } catch {
+    // direct fetch failed
+  }
+  // Fallback: use page_reader (bypasses Cloudflare)
+  if (!xml) {
+    try {
+      xml = await readPage(feedUrl);
+    } catch {
+      // page_reader also failed
+    }
+  }
+  if (!xml) return [];
+
   const items: RawItem[] = [];
-  const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+  // Match both RSS <item> and Atom <entry> elements
+  const itemRegex = /<(?:item|entry)>([\s\S]*?)<\/(?:item|entry)>/gi;
   const matches = xml.match(itemRegex) ?? [];
   for (const block of matches.slice(0, 40)) {
-    const title = block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1]
-      ?? block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "";
-    const link = block.match(/<link>([\s\S]*?)<\/link>/i)?.[1]
-      ?? block.match(/<link[^>]*href="([^"]+)"/i)?.[1] ?? "";
-    const desc = block.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1]
-      ?? block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "";
-    const pub = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1];
+    const title = block.match(/<title[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1]
+      ?? block.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
+    // Link: try <link>text</link> (RSS), <link href="..."/> (Atom), <feedburner:origLink>text</feedburner:origLink>
+    const link = block.match(/<link>([\s\S]*?)<\/link>/i)?.[1]?.trim()
+      ?? block.match(/<link[^>]*href="([^"]+)"/i)?.[1]?.trim()
+      ?? block.match(/<feedburner:origLink>([\s\S]*?)<\/feedburner:origLink>/i)?.[1]?.trim()
+      ?? "";
+    const desc = block.match(/<description[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1]
+      ?? block.match(/<description[^>]*>([\s\S]*?)<\/description>/i)?.[1]
+      ?? block.match(/<summary[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/summary>/i)?.[1]
+      ?? block.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i)?.[1] ?? "";
+    const pub = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]
+      ?? block.match(/<published>([\s\S]*?)<\/published>/i)?.[1]
+      ?? block.match(/<updated>([\s\S]*?)<\/updated>/i)?.[1];
     const cleanDesc = stripHtml(desc);
     const text = `${title} ${cleanDesc}`;
     if (!mentionsAutoRss(text)) continue;
+    // Only include items with a specific article URL (not the generic homepage)
+    const articleUrl = link && link.startsWith("http") && !link.match(/^https?:\/\/[^/]+\/?$/i) ? link : undefined;
     items.push({
-      externalId: `${sourceName}:${link || title}`.slice(0, 200),
+      externalId: `${sourceName}:${articleUrl || link || title}`.slice(0, 200),
       title: stripHtml(title).slice(0, 180),
       description: cleanDesc.slice(0, 700),
       sourceName,
       sourceType: "security-rss",
-      sourceUrl: link || undefined,
+      sourceUrl: articleUrl,
       attackDate: pub ? new Date(pub).toISOString() : undefined,
-      rawJson: JSON.stringify({ title, link }).slice(0, 2000),
+      rawJson: JSON.stringify({ title, link: articleUrl }).slice(0, 2000),
     });
   }
   return items;
