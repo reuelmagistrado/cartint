@@ -1,10 +1,9 @@
 // Dark-web & OSINT source adapters for CARTINT.
 //
 // Sources:
-//   1. ransomware.live API          — ransomware leak-site victims (LLM-filtered for automotive)
-//   2. darkweb                      — unified dark-web source: Robin-style Tor search (6 engines) + RansomLook leak-site monitoring. LLM-filtered for automotive only.
-//   3. security-rss                 — BleepingComputer / HackerNews dark-web breach reporting
-//   4. asrg-advisories              — ASRG (Automotive Security Research Group) curated automotive CVEs
+//   1. darkweb                      — unified dark-web source: Robin-style Tor search (6 engines) + RansomLook leak-site monitoring. LLM-filtered for automotive only.
+//   2. security-rss                 — BleepingComputer / HackerNews dark-web breach reporting
+//   3. asrg-advisories              — ASRG (Automotive Security Research Group) curated automotive CVEs
 //
 // Each adapter returns RawItem[]; the orchestrator runs them through the LLM
 // classifier (false-positive gate) before persisting anything.
@@ -19,13 +18,6 @@ export type SourceDef = {
 };
 
 export const SOURCE_DEFS: SourceDef[] = [
-  {
-    name: "ransomware.live",
-    type: "ransomware-api",
-    url: "https://api.ransomware.live/recentvictims",
-    description: "Aggregated ransomware leak-site victims. Heavily LLM-filtered for automotive relevance.",
-    isDarkWeb: true,
-  },
   {
     name: "darkweb",
     type: "darkweb",
@@ -111,41 +103,7 @@ function mentionsAuto(text: string): boolean {
 
 // ---- Source adapters --------------------------------------------------------
 
-// 1) ransomware.live — ransomware leak-site victims, pre-filtered for automotive.
-export async function fetchRansomwareLive(): Promise<RawItem[]> {
-  const res = await fetchWithTimeout("https://api.ransomware.live/recentvictims");
-  if (!res.ok) throw new Error(`ransomware.live HTTP ${res.status}`);
-  const data = (await res.json()) as Array<Record<string, unknown>>;
-  const items: RawItem[] = [];
-  for (const v of data) {
-    const victim = String(v.victim ?? "").trim();
-    const group = String(v.groupname ?? v.group ?? "").trim();
-    const country = String(v.country ?? "").trim();
-    const description = String(v.description ?? "").trim();
-    const discovered = v.discovered ? String(v.discovered) : undefined;
-    const postUrl = v.post_url ? String(v.post_url) : undefined;
-    const text = `${victim} ${description}`;
-    if (!mentionsAuto(text)) continue;
-    items.push({
-      externalId: `rl:${v.post_url ?? `${victim}-${discovered}`}`,
-      title: `${victim} — ransomware victim (${group || "unknown group"})`,
-      description: description || `Ransomware group ${group} claims breach of ${victim}.`,
-      sourceName: "ransomware.live",
-      sourceType: "ransomware-api",
-      sourceUrl: postUrl,
-      victimOrg: victim,
-      victimSector: String(v.activity ?? ""),
-      country,
-      attackDate: discovered,
-      actor: group,
-      dataTypes: "claimed exfiltrated data",
-      rawJson: JSON.stringify(v).slice(0, 4000),
-    });
-  }
-  return items.slice(0, 40);
-}
-
-// 2) darkweb — unified dark-web source (RansomLook + Robin-style Tor search).
+// 1) darkweb — unified dark-web source (RansomLook + Robin-style Tor search).
 //    This adapter runs TWO sub-pipelines, both LLM-filtered for automotive only:
 //      a. RansomLook: search for automotive terms → health-check groups → return posts
 //      b. Robin-style: search 6 .onion engines via Tor → scrape → LLM classify (only if Tor available)
@@ -412,7 +370,6 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
 
 export async function runSource(name: string): Promise<RawItem[]> {
   switch (name) {
-    case "ransomware.live": return fetchRansomwareLive();
     case "darkweb": return fetchDarkweb();
     case "bleepingcomputer": return fetchSecurityRss("bleepingcomputer", "https://www.bleepingcomputer.com/feed/");
     case "thehackernews": return fetchSecurityRss("thehackernews", "https://feeds.feedburner.com/TheHackersNews");
