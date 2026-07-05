@@ -171,10 +171,8 @@ export function sourceTypeMeta(type: string): { label: string; tone: string } {
       return { label: "Ransomware Leak Sites", tone: "text-rose-300 bg-rose-500/10 border-rose-500/30" };
     case "darkweb-search":
       return { label: "Dark-Web Search (Tor)", tone: "text-fuchsia-300 bg-fuchsia-500/10 border-fuchsia-500/30" };
-    case "darkforum-intel":
-      return { label: "Dark-Web Forum Intel", tone: "text-violet-300 bg-violet-500/10 border-violet-500/30" };
-    case "darkweb-scraper":
-      return { label: "Dark-Web Scraper (Tor)", tone: "text-rose-300 bg-rose-500/10 border-rose-500/30" };
+    case "darkweb":
+      return { label: "Dark-Web (Tor + RansomLook)", tone: "text-rose-300 bg-rose-500/10 border-rose-500/30" };
     case "security-rss":
       return { label: "Security News (dark-web reporting)", tone: "text-cyan-300 bg-cyan-500/10 border-cyan-500/30" };
     case "cve":

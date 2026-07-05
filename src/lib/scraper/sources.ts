@@ -1,12 +1,10 @@
 // Dark-web & OSINT source adapters for CARTINT.
 //
-// Sources (ransomware.live is deliberately only ONE of several — the user's
-// complaint was that the old dashboard scraped ONLY ransomware.live):
-//   1. ransomware.live API          — ransomware leak sites (filtered hard for automotive)
-//   2. ahmia-darkweb                — REAL Tor hidden-service search via the Ahmia clearnet gateway
-//   3. security-rss                 — BleepingComputer / DarkReading / HackerNews dark-web breach reporting
+// Sources:
+//   1. ransomware.live API          — ransomware leak-site victims (LLM-filtered for automotive)
+//   2. darkweb                      — unified dark-web source: Robin-style Tor search (6 engines) + RansomLook leak-site monitoring. LLM-filtered for automotive only.
+//   3. security-rss                 — BleepingComputer / HackerNews dark-web breach reporting
 //   4. asrg-advisories              — ASRG (Automotive Security Research Group) curated automotive CVEs
-//   5. darkforum-intel              — dark-web forum & marketplace monitoring (analyst-curated Tor intel)
 //
 // Each adapter returns RawItem[]; the orchestrator runs them through the LLM
 // classifier (false-positive gate) before persisting anything.
@@ -29,10 +27,10 @@ export const SOURCE_DEFS: SourceDef[] = [
     isDarkWeb: true,
   },
   {
-    name: "ahmia-darkweb",
-    type: "darkweb-search",
-    url: "https://ahmia.fi/search",
-    description: "Real Tor hidden-service search via the Ahmia clearnet gateway. Queries automotive / connected-vehicle terms.",
+    name: "darkweb",
+    type: "darkweb",
+    url: "tor://darkweb-search + ransomlook.io",
+    description: "Dark-web intelligence: Robin-style Tor search (6 .onion engines) + RansomLook leak-site monitoring with health checks. LLM-filtered for automotive relevance only. Requires Tor for .onion scraping.",
     isDarkWeb: true,
   },
   {
@@ -56,20 +54,6 @@ export const SOURCE_DEFS: SourceDef[] = [
     description: "ASRG (Automotive Security Research Group) security advisories — curated automotive CVEs with affected products.",
     isDarkWeb: false,
   },
-  {
-    name: "darkforum-intel",
-    type: "darkforum-intel",
-    url: "tor://darkforum-monitor (analyst-curated)",
-    description: "Dark-web forum & marketplace monitoring for vehicle data sales, ECU exploit kits, and OTA/telematics access. Analyst-curated Tor intelligence stream.",
-    isDarkWeb: true,
-  },
-  {
-    name: "darkweb-scraper",
-    type: "darkweb-scraper",
-    url: "tor://darkweb-search-engines (Robin-style pipeline)",
-    description: "Live dark-web scraper: searches Tor hidden services → scrapes pages → LLM automotive-relevance filter. Requires Tor (SOCKS5 :9050). Inspired by the Robin project.",
-    isDarkWeb: true,
-  },
 ];
 
 // ---- Fetch helpers ----------------------------------------------------------
@@ -85,8 +69,6 @@ async function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = 15000)
 }
 
 async function readPage(url: string): Promise<string> {
-  // Use z-ai-web-dev-sdk page_reader to extract clean HTML content for pages
-  // that are otherwise hard to parse (Ahmia, news article pages).
   const ZAI = (await import("z-ai-web-dev-sdk")).default;
   const zai = await ZAI.create();
   const result = await zai.functions.invoke("page_reader", { url });
@@ -109,7 +91,7 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-// ---- Automotive keyword set used to pre-filter raw scrape results ---------
+// ---- Automotive keyword pre-filter -----------------------------------------
 
 const AUTO_KEYWORDS = [
   "automotive", "vehicle", "oem", "tier-1", "tier-2", "supplier", "dealership",
@@ -129,8 +111,7 @@ function mentionsAuto(text: string): boolean {
 
 // ---- Source adapters --------------------------------------------------------
 
-// 1) ransomware.live — keep as ONE source, filter pre-classification for any
-// automotive signal so we don't flood the LLM with hospitals/schools.
+// 1) ransomware.live — ransomware leak-site victims, pre-filtered for automotive.
 export async function fetchRansomwareLive(): Promise<RawItem[]> {
   const res = await fetchWithTimeout("https://api.ransomware.live/recentvictims");
   if (!res.ok) throw new Error(`ransomware.live HTTP ${res.status}`);
@@ -144,7 +125,7 @@ export async function fetchRansomwareLive(): Promise<RawItem[]> {
     const discovered = v.discovered ? String(v.discovered) : undefined;
     const postUrl = v.post_url ? String(v.post_url) : undefined;
     const text = `${victim} ${description}`;
-    if (!mentionsAuto(text)) continue; // skip obvious non-automotive pre-LLM
+    if (!mentionsAuto(text)) continue;
     items.push({
       externalId: `rl:${v.post_url ?? `${victim}-${discovered}`}`,
       title: `${victim} — ransomware victim (${group || "unknown group"})`,
@@ -164,41 +145,97 @@ export async function fetchRansomwareLive(): Promise<RawItem[]> {
   return items.slice(0, 40);
 }
 
-// 2) Ahmia — REAL dark-web (Tor hidden service) search via the clearnet gateway.
-const AHMIA_QUERIES = ["automotive", "vehicle ecu", "connected car", "ev charging", "can bus"];
-
-export async function fetchAhmia(): Promise<RawItem[]> {
+// 2) darkweb — unified dark-web source (Robin-style Tor search + RansomLook).
+//    This adapter runs TWO sub-pipelines, both LLM-filtered for automotive only:
+//      a. RansomLook: get recent posts from all groups → LLM filter for automotive
+//      b. Robin-style: search 6 .onion engines via Tor → LLM filter (only if Tor available)
+//    Both return results under sourceName "darkweb".
+export async function fetchDarkweb(): Promise<RawItem[]> {
   const items: RawItem[] = [];
-  for (const q of AHMIA_QUERIES) {
-    try {
-      const html = await readPage(`https://ahmia.fi/search/?q=${encodeURIComponent(q)}`);
-      // Ahmia result items: each result has <li> with <a href> + <p> description.
-      const blocks = html.split(/<li[^>]*class=["']?searchResult/i);
-      for (const block of blocks.slice(1, 9)) {
-        const titleMatch = block.match(/<a[^>]*>([\s\S]*?)<\/a>/i);
-        const hrefMatch = block.match(/href=["']([^"']+)["']/i);
-        const descMatch = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-        const title = titleMatch ? stripHtml(titleMatch[1]) : q;
-        const desc = descMatch ? stripHtml(descMatch[1]) : "";
-        const href = hrefMatch ? hrefMatch[1] : "";
-        if (!title && !desc) continue;
+
+  // ── Sub-pipeline A: RansomLook leak-site monitoring ──────────────────────
+  // Get recent posts from RansomLook (clearnet API, works without Tor),
+  // then LLM-filter for automotive relevance only.
+  try {
+    const { getRecentPosts, checkGroupHealth } = await import("./ransomlook");
+    const posts = await getRecentPosts(100);
+    // Pre-filter with automotive keywords to reduce LLM calls
+    const autoPosts = posts.filter((p) => {
+      const text = `${p.post_title || ""} ${p.description || ""} ${p.group_name || ""}`;
+      return mentionsAuto(text);
+    });
+    // For each automotive-relevant post, check the group's mirror health
+    for (const post of autoPosts.slice(0, 20)) {
+      if (!post.group_name) continue;
+      const health = await checkGroupHealth(post.group_name);
+      // Only include posts from groups with available mirrors (uptime > 50%)
+      if (health.available || health.avg_uptime_30d > 50) {
         items.push({
-          externalId: `ahmia:${q}:${href || title}`.slice(0, 200),
-          title: title.slice(0, 180) || `Dark-web result for "${q}"`,
-          description: desc.slice(0, 600) || `Ahmia Tor hidden-service search result for "${q}".`,
-          sourceName: "ahmia-darkweb",
-          sourceType: "darkweb-search",
-          sourceUrl: href || undefined,
-          attackDate: new Date().toISOString(),
-          actor: undefined,
-          rawJson: JSON.stringify({ query: q, href }).slice(0, 2000),
+          externalId: `darkweb:rl:${post.group_name}:${post.post_title?.slice(0, 50)}`,
+          title: post.post_title || `${post.group_name} leak post`,
+          description: post.description || post.post_title || `Post from ${post.group_name} ransomware group.`,
+          sourceName: "darkweb",
+          sourceType: "darkweb",
+          sourceUrl: post.post_url || undefined,
+          victimOrg: post.post_title?.split("—")[0]?.trim() || undefined,
+          actor: post.group_name,
+          attackDate: post.timestamp,
+          dataTypes: "claimed exfiltrated data",
+          rawJson: JSON.stringify({ source: "ransomlook", group: post.group_name, health: { available: health.available, uptime: health.avg_uptime_30d, bestMirror: health.best_mirror } }).slice(0, 2000),
         });
       }
-    } catch {
-      // Ahmia occasionally rate-limits; continue to next query.
     }
+  } catch {
+    // RansomLook may be unavailable; continue to Robin-style pipeline.
   }
-  return items.slice(0, 30);
+
+  // ── Sub-pipeline B: Robin-style Tor search ───────────────────────────────
+  // Search 6 dark-web search engines via Tor, then LLM-filter.
+  // Only runs if Tor is available (local deployment with Tor running).
+  try {
+    const { isTorAvailable } = await import("./tor");
+    if (isTorAvailable()) {
+      const { searchDarkWeb } = await import("./darkweb-search");
+      const { scrapeUrls } = await import("./darkweb-scrape");
+      const { refineQuery, filterResults, classifyBatch, isAccepted } = await import("./darkweb-llm-filter");
+
+      const refinedQuery = await refineQuery("automotive ECU exploit vehicle data");
+      const searchResults = await searchDarkWeb(refinedQuery);
+      if (searchResults.length > 0) {
+        const filtered = await filterResults(searchResults, 20);
+        const urls = filtered.map((r) => r.link);
+        const scraped = await scrapeUrls(urls);
+        const pages = Object.entries(scraped).map(([url, content]) => ({ url, content }));
+        if (pages.length > 0) {
+          const classifications = await classifyBatch(pages);
+          for (const { url, classification } of classifications) {
+            if (isAccepted(classification) && classification) {
+              items.push({
+                externalId: `darkweb:robin:${url}`,
+                title: classification.victim
+                  ? `${classification.victim} — dark-web threat (${classification.threat_actor || "unknown"})`
+                  : `Dark-web threat — ${classification.threat_actor || "unknown"}`,
+                description: classification.reasoning.slice(0, 1200),
+                sourceName: "darkweb",
+                sourceType: "darkweb",
+                sourceUrl: url,
+                victimOrg: classification.victim || undefined,
+                country: classification.country || undefined,
+                actor: classification.threat_actor || undefined,
+                dataTypes: classification.data_types.join(", ") || undefined,
+                suggestedSeverity: classification.confidence >= 90 ? "critical" : classification.confidence >= 75 ? "high" : classification.confidence >= 60 ? "medium" : "low",
+                rawJson: JSON.stringify({ source: "robin", classification, url }).slice(0, 4000),
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Tor not available or search failed; RansomLook results still returned.
+  }
+
+  return items;
 }
 
 // 3) Security RSS — generic parser used by bleepingcomputer & thehackernews.
@@ -219,7 +256,7 @@ export async function fetchSecurityRss(sourceName: string, feedUrl: string): Pro
     const pub = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1];
     const cleanDesc = stripHtml(desc);
     const text = `${title} ${cleanDesc}`;
-    if (!mentionsAuto(text)) continue; // pre-filter
+    if (!mentionsAuto(text)) continue;
     items.push({
       externalId: `${sourceName}:${link || title}`.slice(0, 200),
       title: stripHtml(title).slice(0, 180),
@@ -235,11 +272,6 @@ export async function fetchSecurityRss(sourceName: string, feedUrl: string): Pro
 }
 
 // 4) ASRG (Automotive Security Research Group) security advisories.
-//    Replaces the previous NVD CVE source. ASRG publishes curated automotive
-//    CVEs with affected products at https://www.asrg.io/security-advisories.
-//    For each advisory we also fetch its detail page to extract the CVSS 3.1
-//    base score and derive the severity from it (CVSS: 9.0-10 Critical,
-//    7.0-8.9 High, 4.0-6.9 Medium, 0.1-3.9 Low).
 function cvssToSeverity(score: number): "critical" | "high" | "medium" | "low" {
   if (score >= 9.0) return "critical";
   if (score >= 7.0) return "high";
@@ -289,11 +321,6 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
     }
   } catch {}
 
-  // Note: we do NOT fetch detail pages for CVSS scores during the scrape —
-  // that added 30-60s and caused the scrape to time out with 0 results.
-  // Instead we use ASRG's listing severity label (which ASRG already derives
-  // from the CVSS score) as the suggestedSeverity. This keeps the adapter
-  // fast (~5s for the listing page) so the scrape completes successfully.
   for (const { href, inner } of cards) {
     const cveIdMatch = inner.match(/(CVE-\d{4}-\d{4,7})/i);
     const cveId = cveIdMatch ? cveIdMatch[1].toUpperCase() : null;
@@ -324,119 +351,15 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
   return items.slice(0, 40);
 }
 
-// 5) darkforum-intel — analyst-curated Tor forum / marketplace monitoring.
-// Models what a dark-web monitor (cf. Robin) ingests: data-sale posts, ECU
-// exploit kits, OTA/telematics access brokers. Items are clearly marked
-// verified=false so analysts know they require human corroboration.
-export function fetchDarkForumIntel(): RawItem[] {
-  const now = Date.now();
-  const days = (n: number) => new Date(now - n * 86400000).toISOString();
-  const posts: Array<Partial<RawItem> & { title: string; description: string }> = [
-    {
-      title: "Sale: Telematics DB dump — 1.2M connected-vehicle records (EU OEM)",
-      description: "Vendor offers 1.2M records from a European OEM telematics backend: VIN, owner PII, GPS history, OTA logs. Sample provided. Price 0.8 XMR.",
-      victimOrg: "European OEM (unnamed)",
-      country: "Germany",
-      actor: "BlackAxle",
-      dataTypes: "VIN, owner PII, GPS history, OTA logs",
-      attackDate: days(2),
-    },
-    {
-      title: "Exploit kit: CAN-bus injection for legacy infotainment ECUs (2018-2022)",
-      description: "Packaged CAN-bus injection tool targeting unauthenticated UDS diagnostics on 2018-2022 infotainment ECUs. Enables door-lock & IMMO bypass.",
-      actor: "garage0x",
-      country: "Russia",
-      dataTypes: "ECU exploit, CAN frames",
-      attackDate: days(5),
-    },
-    {
-      title: "Access broker: Fleet management SaaS admin (12k vehicles)",
-      description: "Selling admin access to a fleet management platform managing ~12,000 commercial vehicles across NA. Includes API tokens & live tracking.",
-      victimOrg: "Fleet management platform (NA)",
-      country: "United States",
-      actor: "RouteKill",
-      dataTypes: "API tokens, fleet tracking data",
-      attackDate: days(7),
-    },
-    {
-      title: "Sale: EV charging network CSMS credentials (3 operators)",
-      description: "CSMS operator credentials for three EV charging networks. Enables free charging, billing manipulation, and station reboot.",
-      victimOrg: "EV charging networks (3)",
-      country: "Netherlands",
-      actor: "VoltLeak",
-      dataTypes: "CSMS credentials, billing data",
-      attackDate: days(9),
-    },
-    {
-      title: "Leak: Aftermarket parts distributor customer DB (~380k)",
-      description: "Customer & order database of a large aftermarket auto-parts distributor leaked on forum. Includes payment tokens & addresses.",
-      victimOrg: "Aftermarket parts distributor",
-      country: "United States",
-      actor: "PartsDump",
-      dataTypes: "Customer PII, payment tokens",
-      attackDate: days(12),
-    },
-    {
-      title: "Sale: OTA signing key (Tier-1 supplier, suspected)",
-      description: "Alleged OTA firmware signing key from a Tier-1 supplier; would enable malicious firmware push to affected ECUs. Verification pending.",
-      victimOrg: "Tier-1 supplier (suspected)",
-      country: "Japan",
-      actor: "keyGhost",
-      dataTypes: "OTA signing key",
-      attackDate: days(15),
-    },
-    {
-      title: "Access broker: Dealership DMS (35 dealerships, NA group)",
-      description: "Network access to a dealership group's DMS covering 35 locations. Finance & customer PII accessible.",
-      victimOrg: "Dealership group (NA)",
-      country: "Canada",
-      actor: "Showroom",
-      dataTypes: "Customer PII, finance records",
-      attackDate: days(18),
-    },
-    {
-      title: "Leak: Ride-hailing driver KYC documents (~90k)",
-      description: "Driver KYC documents (licenses, selfies, bank details) for a ride-hailing/mobility platform surfaced on a Tor forum.",
-      victimOrg: "Mobility platform",
-      country: "India",
-      actor: "MobiLoot",
-      dataTypes: "Driver KYC, bank details",
-      attackDate: days(21),
-    },
-  ];
-
-  return posts.map((p, i) => ({
-    externalId: `darkforum:${i + 1}`,
-    title: p.title,
-    description: p.description,
-    sourceName: "darkforum-intel",
-    sourceType: "darkforum-intel",
-    sourceUrl: undefined,
-    victimOrg: p.victimOrg,
-    victimSector: undefined,
-    country: p.country,
-    attackDate: p.attackDate,
-    actor: p.actor,
-    dataTypes: p.dataTypes,
-    rawJson: JSON.stringify({ curated: true, requires_verification: true }).slice(0, 1000),
-  }));
-}
+// ---- Source router ----------------------------------------------------------
 
 export async function runSource(name: string): Promise<RawItem[]> {
   switch (name) {
     case "ransomware.live": return fetchRansomwareLive();
-    case "ahmia-darkweb": return fetchAhmia();
+    case "darkweb": return fetchDarkweb();
     case "bleepingcomputer": return fetchSecurityRss("bleepingcomputer", "https://www.bleepingcomputer.com/feed/");
     case "thehackernews": return fetchSecurityRss("thehackernews", "https://feeds.feedburner.com/TheHackersNews");
     case "asrg-advisories": return fetchAsrgAdvisories();
-    case "darkforum-intel": return fetchDarkForumIntel();
-    case "darkweb-scraper": {
-      // Run the full dark-web pipeline with a default automotive query.
-      // For custom queries, use the /api/darkweb-search endpoint.
-      const { runDarkwebPipeline } = await import("./darkweb-pipeline");
-      const result = await runDarkwebPipeline("automotive ECU exploit vehicle data");
-      return result.threats;
-    }
     default: return [];
   }
 }
