@@ -1,11 +1,12 @@
 // Auto-ISAC Automotive Threat Matrix (ATM) — generated from the official STIX 2.1 bundle.
 // 14 tactics in the proper kill-chain sequence, 77 techniques.
 
-export type AtmTactic = { id: string; name: string; description: string; techniques: { id: string; name: string; description: string }[]; };
+export type AtmTactic = { id: string; tacticId: string; name: string; description: string; techniques: { id: string; name: string; description: string }[]; };
 
 export const ATM_TACTICS: AtmTactic[] = [
   {
     id: "reconnaissance",
+    tacticId: "ATM-TA0001",
     name: "Reconnaissance",
     description: "The adversary is trying to gather information they can use to plan future operations. Reconnaissance consists of techniques that involve adversaries actively or passively gathering information that can be used to support an attack on the vehicle. These techniques focus on sources the adversary can target to obtain information, rather than specific information found. These information can be leveraged by the adversary to aid in other phases of the adversary lifecycle, such as using gathered information to plan and execute Initial Access, to scope and prioritize post-compromise objectives, or to drive and lead further Reconnaissance efforts. This tactic was adapted from MITRE ATT&CK.",
     techniques: [
@@ -15,6 +16,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "manipulate-environment",
+    tacticId: "ATM-TA0002",
     name: "Manipulate Environment",
     description: "The adversary is attempting to intercept or manipulate network traffic to or from a vehicle, or manipulate the vehicle\u2019s natural environment to achieve their goal without physically manipulating the vehicle itself.This category refers to network-based techniques that an adversary may utilize to achieve their objectives or create conditions conducive to employing techniques from the 'initial access' tactic. These techniques involve intercepting or manipulating network traffic to and from the vehicle's mobile device.Additionally, this category covers techniques that involve manipulating the physical environment surrounding a vehicle to confuse its sensors or artificial intelligence processing systems, without directly altering the vehicle's mechanics or components.This tactic was adapted from MITRE ATT&CK.",
     techniques: [
@@ -30,6 +32,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "initial-access",
+    tacticId: "ATM-TA0003",
     name: "Initial Access",
     description: "Adapted from MITRE ATT&CK:The adversary is trying to get into the vehicle network.The initial access tactic represents the vectors adversaries use to gain an initial foothold onto a vehicle.",
     techniques: [
@@ -45,6 +48,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "execution",
+    tacticId: "ATM-TA0004",
     name: "Execution",
     description: "The adversary is trying to run malicious code. Execution of the malicious code involves infiltrating an ECU's memory space, where it can manipulate data and instructions to carry out unauthorized operations. This process often involves exploiting vulnerabilities in the component's firmware or software. Techniques that run malicious code are often paired with techniques from all other tactics to achieve broader goals, like moving laterally in a vehicle network or affecting vehicle functions.Adapted from MITRE ATT&CK for mobile.",
     techniques: [
@@ -55,6 +59,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "persistence",
+    tacticId: "ATM-TA0005",
     name: "Persistence",
     description: "The adversary is trying to maintain their foothold.Persistence consists of techniques that adversaries use to keep access to vehicle systems across restarts, changed credentials, and other interruptions that could cut off their access. Techniques used for persistence include any access, action, or configuration changes that let them maintain their foothold on vehicle systems, such as replacing or hijacking legitimate code or adding startup code.Adapted from MITRE ATT&CK.",
     techniques: [
@@ -67,6 +72,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "privilege-escalation",
+    tacticId: "ATM-TA0006",
     name: "Privilege Escalation",
     description: "The adversary is trying to gain higher-level permissions.Privilege Escalation consists of techniques that adversaries use to gain higher-level permissions on an ECU. Adversaries can often gain initial access to an ECU with unprivileged access but require elevated permissions or capabilities to follow through on their objectives. Common approaches are to take advantage of system weaknesses, misconfigurations, and vulnerabilities. Examples of elevated access include:root accesscontrol of adjacent computing environments on the same ECUThese techniques can overlap with Persistence techniques, as OS features that let an adversary persist can execute in an elevated context.Adapted from MITRE ATT&CK.",
     techniques: [
@@ -82,6 +88,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "defense-evasion",
+    tacticId: "ATM-TA0007",
     name: "Defense Evasion",
     description: "The adversary is attempting to bypass or manipulate security controls. This can include bypassing networking filtering, intrusion detection systems (IDS), and code integrity checks to undermine the protection measures in place.Defense Evasion consists of techniques that adversaries use to advance their objectives despite the presence of defensive measures. This tactic is different from MITRE ATT&CK\u2019s \u2018defense evasion\u2019, which is squarely focused on avoiding detection.",
     techniques: [
@@ -94,6 +101,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "credential-access",
+    tacticId: "ATM-TA0008",
     name: "Credential Access",
     description: "The adversary is trying to steal vehicle network credentials.Credential Access consists of techniques for stealing vehicle network credentials like cryptographic tokens, keys, and passwords. Techniques used to get credentials include credential dumping and collecting unsecured credentials stored on ECU file systems. Using legitimate credentials can give adversaries access to vehicle systems and make them harder to detect.Adapted from MITRE ATT&CK.",
     techniques: [
@@ -109,6 +117,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "discovery",
+    tacticId: "ATM-TA0009",
     name: "Discovery",
     description: "The adversary is trying to figure out the vehicle environment.Discovery consists of techniques an adversary may use to gain knowledge about a vehicle\u2019s systems and its internal network. These techniques help adversaries observe the environment and orient themselves before deciding how to act. They also allow adversaries to explore what they can control and what\u2019s around their entry point in order to discover how it could benefit their current objective. Native operating system tools are often used toward this post-compromise information-gathering objective.This tactic does not include techniques or other work that is performed during an offline / reverse engineering phase of an attack \u2013 this is currently out of scope of the auto threat matrix. In other words, the techniques are listed here if they are part of an active attack, but they are not listed if they only need to be used during a reverse engineering / exploit development phase.This tactic was adapted from MITRE ATT&CK.",
     techniques: [
@@ -124,6 +133,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "lateral-movement",
+    tacticId: "ATM-TA0010",
     name: "Lateral Movement",
     description: "The adversary is trying to move through the vehicle network.Lateral movement consists of techniques that enable an adversary to access and control remote systems on a vehicle network and could, but does not necessarily, include execution of tools on ECUs. The lateral movement techniques could allow an adversary to gather information from a system without needing additional tools, such as a remote access tool.This definition was adapted from MITRE ATT&CK.",
     techniques: [
@@ -137,6 +147,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "collection",
+    tacticId: "ATM-TA0011",
     name: "Collection",
     description: "The adversary is trying to gather data of interest to their goal.Collection consists of techniques used to identify and gather information, such as sensitive files, location history, or recordings of in-vehicle audio from a target vehicle prior to exfiltration. This category also covers locations on a system or vehicle network where the adversary may look for information to exfiltrate.This tactic was adapted from MITRE ATT&CK.",
     techniques: [
@@ -153,6 +164,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "command-and-control",
+    tacticId: "ATM-TA0012",
     name: "Command and Control",
     description: "The adversary is trying to communicate with compromised systems to control them.Command and Control consists of techniques that adversaries may use to communicate with a compromised vehicle and its systems. Adversaries can attempt to mimic normal, expected traffic to avoid detection. There are many ways an adversary can establish command and control with various levels of stealth depending on the vehicle\u2019s connectivity features and its defenses.This tactic was adapted from MITRE ATT&CK.",
     techniques: [
@@ -166,6 +178,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "exfiltration",
+    tacticId: "ATM-TA0013",
     name: "Exfiltration",
     description: "The adversary is trying to steal data.Exfiltration consists of techniques that adversaries may use to steal data from the vehicle. Once they\u2019ve collected data, adversaries often package it to avoid detection while removing it. This can include compression and encryption. Techniques for getting data out of a target network typically include transferring it over their command and control channel or an alternate channel and may also include putting size limits on the transmission. Depending on a vehicle\u2019s connectivity features, it may be possible to exfiltrate over channels that do not use internet communication, such as Bluetooth or Wi-Fi.This tactic was adapted from MITRE ATT&CK.",
     techniques: [
@@ -180,6 +193,7 @@ export const ATM_TACTICS: AtmTactic[] = [
   },
   {
     id: "affect-vehicle-function",
+    tacticId: "ATM-TA0014",
     name: "Affect Vehicle Function",
     description: "The adversary is trying to affect vehicle functions and systems, such as propulsion control, airbag deployment, audio, and displays.",
     techniques: [

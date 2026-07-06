@@ -32,6 +32,7 @@ export async function GET() {
 
   const tactics = ATM_TACTICS.map((t) => ({
     id: t.id,
+    tacticId: t.tacticId,
     name: t.name,
     description: t.description,
     count: tacticCount.get(t.name) ?? 0,

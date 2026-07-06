@@ -84,6 +84,7 @@ export type SourceInfo = {
 
 export type AtmTacticData = {
   id: string;
+  tacticId: string;
   name: string;
   description: string;
   count: number;
