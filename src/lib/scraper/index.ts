@@ -101,12 +101,19 @@ export async function scrapeSource(name: string): Promise<ScrapeResult> {
       const rawItem = items.find((i) => i.externalId === c.externalId);
       if (!rawItem) continue;
 
-      // Skip if already present (dedup across runs).
+      // Check if already present (dedup across runs).
       const existing = await db.threat.findUnique({ where: { externalId: c.externalId } });
-      if (existing) continue;
 
       const isAccepted =
         c.isAutomotive && c.relevanceScore >= RELEVANCE_THRESHOLD;
+
+      if (existing) {
+        // Item already in DB — count it based on its stored classification
+        // so the audit trail shows accurate accepted/rejected totals.
+        if (existing.isAutomotive && existing.relevanceScore >= RELEVANCE_THRESHOLD) accepted++;
+        else rejected++;
+        continue;
+      }
 
       if (isAccepted) accepted++;
       else rejected++;
