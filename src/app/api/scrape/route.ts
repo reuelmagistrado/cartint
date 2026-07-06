@@ -3,6 +3,7 @@ import { ensureSourcesSeeded, scrapeAll, scrapeSource, notifyThreatStream } from
 import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // 5 minutes — darkweb scrape + LLM classification can take a while
 
 // POST /api/scrape — trigger a dark-web OSINT scrape.
 // Body: { source?: string }  — if source is provided, scrape only that source.

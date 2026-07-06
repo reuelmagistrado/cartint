@@ -179,6 +179,15 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(source ? { source } : {}),
         });
+        // Handle non-JSON responses (server timeout returns HTML error page)
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error(
+            res.status === 504 || res.status === 502
+              ? "Scrape timed out — the dark-web pipeline takes time (RansomLook API searches + LLM classification). Try again or wait for the auto-refresh."
+              : `Server returned ${res.status} (expected JSON, got ${contentType})`
+          );
+        }
         const json = await res.json();
         if (!res.ok || !json.ok) throw new Error(json.error || "Scrape failed");
         const accepted = (json.results as { accepted: number }[]).reduce((s, r) => s + (r.accepted || 0), 0);
