@@ -77,6 +77,7 @@ export default function Home() {
   const [trendDays, setTrendDays] = usePersistentState("cartint:filter:trendDays", 14);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "atm">("overview");
+  const [allThreats, setAllThreats] = useState<Threat[]>([]);
   const [actorProfile, setActorProfile] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareActors, setCompareActors] = useState<string[]>([]);
@@ -147,6 +148,15 @@ export default function Home() {
     const t = setInterval(loadOverview, 60000);
     return () => clearInterval(t);
   }, [loadOverview]);
+
+  // Load ALL threats (not paginated) when the ATM tab is activated.
+  useEffect(() => {
+    if (activeTab !== "atm") return;
+    fetch("/api/threats?limit=500&offset=0&source=all&severity=all&category=all&tactic=all&country=all&search=&includeRejected=0")
+      .then((r) => r.json())
+      .then((json) => setAllThreats(json.items ?? []))
+      .catch(() => {});
+  }, [activeTab]);
 
   // Live-stream: when the WebSocket mini-service broadcasts a "threats:new"
   // event (a scrape just completed), show a toast + auto-refresh the feed.
@@ -409,7 +419,7 @@ export default function Home() {
       {/* Main */}
       <main className="relative z-10 mx-auto w-full max-w-[1600px] flex-1 px-4 py-4">
         {activeTab === "atm" ? (
-          <AtmMatrixView tactics={atm.tactics} threats={threats} loading={loading} />
+          <AtmMatrixView tactics={atm.tactics} threats={allThreats} loading={loading} />
         ) : (
         <>
         {/* Hero / mission banner */}
