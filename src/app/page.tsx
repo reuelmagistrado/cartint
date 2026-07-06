@@ -17,6 +17,7 @@ import {
   Keyboard,
   Grid3x3,
   LayoutDashboard,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ import { TrendChart } from "@/components/dashboard/trend-chart";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { AtmMatrix } from "@/components/dashboard/atm-matrix";
 import { AtmMatrixView } from "@/components/dashboard/atm-matrix-view";
+import { CtiReportsTab } from "@/components/dashboard/cti-reports-tab";
 import { ThreatFeed, ThreatDetailDialog } from "@/components/dashboard/threat-feed";
 import { AuditPanel } from "@/components/dashboard/audit-panel";
 import { ReportGenerator } from "@/components/dashboard/report-generator";
@@ -76,7 +78,7 @@ export default function Home() {
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [trendDays, setTrendDays] = usePersistentState("cartint:filter:trendDays", 14);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "atm">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "atm" | "cti">("overview");
   const [allThreats, setAllThreats] = useState<Threat[]>([]);
   const [actorProfile, setActorProfile] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -149,9 +151,9 @@ export default function Home() {
     return () => clearInterval(t);
   }, [loadOverview]);
 
-  // Load ALL threats (not paginated) when the ATM tab is activated.
+  // Load ALL threats (not paginated) when the ATM or CTI Reports tab is activated.
   useEffect(() => {
-    if (activeTab !== "atm") return;
+    if (activeTab !== "atm" && activeTab !== "cti") return;
     fetch("/api/threats?limit=500&offset=0&source=all&severity=all&category=all&tactic=all&country=all&search=&includeRejected=0")
       .then((r) => r.json())
       .then((json) => setAllThreats(json.items ?? []))
@@ -413,6 +415,17 @@ export default function Home() {
             <Grid3x3 className="h-3.5 w-3.5" />
             ATM Matrix
           </button>
+          <button
+            onClick={() => setActiveTab("cti")}
+            className={`flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+              activeTab === "cti"
+                ? "border-emerald-500 text-emerald-300"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            CTI Reports
+          </button>
         </div>
       </div>
 
@@ -420,6 +433,13 @@ export default function Home() {
       <main className="relative z-10 mx-auto w-full max-w-[1600px] flex-1 px-4 py-4">
         {activeTab === "atm" ? (
           <AtmMatrixView tactics={atm.tactics} threats={allThreats} loading={loading} />
+        ) : activeTab === "cti" ? (
+          <CtiReportsTab
+            threats={allThreats}
+            actors={filters.actors}
+            categories={filters.categories}
+            countries={filters.countries}
+          />
         ) : (
         <>
         {/* Hero / mission banner */}
