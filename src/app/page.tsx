@@ -15,6 +15,8 @@ import {
   Filter,
   Sparkles,
   Keyboard,
+  Grid3x3,
+  LayoutDashboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +32,7 @@ import { KpiCards } from "@/components/dashboard/kpi-cards";
 import { TrendChart } from "@/components/dashboard/trend-chart";
 import { SourcesPanel } from "@/components/dashboard/sources-panel";
 import { AtmMatrix } from "@/components/dashboard/atm-matrix";
+import { AtmMatrixView } from "@/components/dashboard/atm-matrix-view";
 import { ThreatFeed, ThreatDetailDialog } from "@/components/dashboard/threat-feed";
 import { AuditPanel } from "@/components/dashboard/audit-panel";
 import { ReportGenerator } from "@/components/dashboard/report-generator";
@@ -73,6 +76,7 @@ export default function Home() {
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [trendDays, setTrendDays] = usePersistentState("cartint:filter:trendDays", 14);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "atm">("overview");
   const [actorProfile, setActorProfile] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareActors, setCompareActors] = useState<string[]>([]);
@@ -374,8 +378,40 @@ export default function Home() {
         </div>
       </header>
 
+      {/* Tab navigation */}
+      <div className="sticky top-[60px] z-30 border-b border-slate-800 bg-[#070b12]/95 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] gap-1 px-4">
+          <button
+            onClick={() => setActiveTab("overview")}
+            className={`flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+              activeTab === "overview"
+                ? "border-emerald-500 text-emerald-300"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <LayoutDashboard className="h-3.5 w-3.5" />
+            Overview
+          </button>
+          <button
+            onClick={() => setActiveTab("atm")}
+            className={`flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
+              activeTab === "atm"
+                ? "border-emerald-500 text-emerald-300"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Grid3x3 className="h-3.5 w-3.5" />
+            ATM Matrix
+          </button>
+        </div>
+      </div>
+
       {/* Main */}
-      <main className="relative z-10 mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-4 py-4">
+      <main className="relative z-10 mx-auto w-full max-w-[1600px] flex-1 px-4 py-4">
+        {activeTab === "atm" ? (
+          <AtmMatrixView tactics={atm.tactics} threats={threats} loading={loading} />
+        ) : (
+        <>
         {/* Hero / mission banner */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -477,9 +513,6 @@ export default function Home() {
           />
         </div>
 
-        {/* ATM matrix full width */}
-        <AtmMatrix tactics={atm.tactics} maxCount={atm.maxCount} loading={loading} />
-
 
         {/* Scrape history + false-positive trend */}
         <ScrapeHistoryChart />
@@ -515,7 +548,8 @@ export default function Home() {
           <AuditPanel stats={stats} />
           <ReportGenerator reports={reports} onRefresh={loadOverview} />
         </div>
-
+        </>
+        )}
       </main>
 
       {/* Footer (sticky) */}
