@@ -293,11 +293,6 @@ export function AtmMatrixView({
                     <span className="font-mono text-[10px] text-slate-500">
                       {String(i + 1).padStart(2, "0")}
                     </span>
-                    {tactic.count > 0 && (
-                      <Badge variant="outline" className="h-5 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[9px] text-emerald-300">
-                        {tactic.count}
-                      </Badge>
-                    )}
                   </div>
                   <h3 className={`mt-1 text-xs font-bold leading-tight ${
                     isPrimary ? "text-emerald-200" : isHighlighted ? "text-cyan-200" : "text-slate-100"
@@ -323,18 +318,11 @@ export function AtmMatrixView({
                             ? "border-emerald-500/60 bg-emerald-500/15 shadow-md shadow-emerald-500/10"
                             : isTechDimmed
                               ? "border-slate-800 bg-slate-900/20 opacity-40"
-                              : tech.count > 0
-                                ? "border-slate-600 bg-slate-800/40"
-                                : "border-slate-800 bg-slate-900/30"
+                              : "border-slate-800 bg-slate-900/30"
                         }`}
                       >
                         <div className="flex items-start justify-between gap-1.5">
                           <span className="font-mono text-[9px] text-slate-500">{tech.id}</span>
-                          {tech.count > 0 && (
-                            <span className="flex h-4 min-w-[1rem] items-center justify-center rounded bg-emerald-500/20 px-1 font-mono text-[9px] font-bold text-emerald-300">
-                              {tech.count}
-                            </span>
-                          )}
                         </div>
                         <p className={`mt-0.5 text-[10px] font-medium leading-tight ${
                           isTechHighlighted ? "text-emerald-100" : "text-slate-200"
