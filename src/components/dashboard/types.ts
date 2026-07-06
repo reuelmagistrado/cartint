@@ -127,6 +127,37 @@ export type IOCsResult = {
   method: "llm" | "regex-fallback" | "none";
 };
 
+// AI ATM mapping result — output of the 5-step attacker-intent-first methodology.
+export type AtmMappingResult = {
+  threatId: string;
+  incidentContext: {
+    targetAsset: string;
+    exposedInterface: string;
+    attackSurface: string;
+    observedEffect: string;
+    vehicleLevelConsequence: string;
+  };
+  attackerIntent: string;
+  tactics: {
+    name: string;
+    reasoning: string;
+    evidenceType: "observed" | "inferred";
+    techniques: {
+      name: string;
+      id: string;
+      reasoning: string;
+      evidenceType: "observed" | "inferred";
+      technicallyConsistent: boolean;
+    }[];
+  }[];
+  knownFacts: string[];
+  inferences: string[];
+  unknowns: string[];
+  confidence: "high" | "medium" | "low";
+  analyticalNotes: string;
+  mappingComplete: boolean;
+};
+
 export const SEVERITY_META: Record<
   Severity,
   { label: string; text: string; bg: string; border: string; dot: string; hex: string }

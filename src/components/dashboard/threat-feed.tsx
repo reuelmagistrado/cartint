@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download, Star, Link2, Loader2, Fingerprint, Copy, Check } from "lucide-react";
+import { Search, ShieldX, ShieldCheck, ExternalLink, MapPin, User, Database, ChevronRight, Download, Star, Link2, Loader2, Fingerprint, Copy, Check, Brain, Target, Eye, GitBranch, AlertCircle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { Threat, RelatedThreat, IOCsResult } from "./types";
+import type { Threat, RelatedThreat, IOCsResult, AtmMappingResult } from "./types";
 import { SEVERITY_META, sourceTypeMeta, fmtDate } from "./types";
 
 export function ThreatDetailDialog({
@@ -31,12 +31,15 @@ export function ThreatDetailDialog({
   const [iocs, setIocs] = useState<IOCsResult | null>(null);
   const [iocsLoading, setIocsLoading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [atmMapping, setAtmMapping] = useState<AtmMappingResult | null>(null);
+  const [atmMappingLoading, setAtmMappingLoading] = useState(false);
 
   useEffect(() => {
     if (!threat || !open) {
       queueMicrotask(() => {
         setRelated([]);
         setIocs(null);
+        setAtmMapping(null);
       });
       return;
     }
@@ -77,6 +80,20 @@ export function ThreatDetailDialog({
       setCopied(key);
       setTimeout(() => setCopied(null), 1200);
     });
+  };
+
+  const mapToAtm = async () => {
+    if (!threat) return;
+    setAtmMappingLoading(true);
+    try {
+      const res = await fetch(`/api/threats/${threat.id}/map-atm`, { method: "POST" });
+      const json = await res.json();
+      if (json.ok) setAtmMapping(json.mapping);
+    } catch {
+      // non-fatal
+    } finally {
+      setAtmMappingLoading(false);
+    }
   };
 
   if (!threat) return null;
@@ -160,6 +177,106 @@ export function ThreatDetailDialog({
                   &ldquo;{threat.classificationReason}&rdquo;
                 </div>
               </div>
+            </div>
+
+            {/* AI ATM Mapping section */}
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h4 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  <Brain className="h-3.5 w-3.5 text-cyan-400" /> AI ATM Mapping
+                  <span className="text-[9px] font-normal normal-case text-slate-500">Attacker-Intent Analysis</span>
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={mapToAtm}
+                  disabled={atmMappingLoading}
+                  className="h-6 border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
+                >
+                  {atmMappingLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Brain className="h-3 w-3" />}
+                  {atmMapping ? "Re-map" : "Map to ATM"}
+                </Button>
+              </div>
+              {atmMappingLoading ? (
+                <div className="flex items-center gap-2 py-4 text-[11px] text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Running 5-step ATM mapping methodology…
+                </div>
+              ) : atmMapping ? (
+                <div className="space-y-3 rounded-lg border border-cyan-500/20 bg-slate-900/50 p-3">
+                  {/* Incident context */}
+                  <div className="grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
+                    <ContextRow icon={Target} label="Target Asset" value={atmMapping.incidentContext.targetAsset} />
+                    <ContextRow icon={Eye} label="Attack Surface" value={atmMapping.incidentContext.attackSurface} />
+                    <ContextRow icon={AlertCircle} label="Observed Effect" value={atmMapping.incidentContext.observedEffect} />
+                    <ContextRow icon={GitBranch} label="Vehicle Consequence" value={atmMapping.incidentContext.vehicleLevelConsequence} />
+                  </div>
+
+                  {/* Attacker intent */}
+                  <div className="rounded border border-slate-700/50 bg-slate-800/30 p-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-cyan-400">Attacker Intent Reconstruction</p>
+                    <p className="text-[11px] leading-relaxed text-slate-300">{atmMapping.attackerIntent}</p>
+                  </div>
+
+                  {/* Mapped tactics + techniques */}
+                  <div>
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      Mapped Tactics & Techniques ({atmMapping.tactics.length})
+                    </p>
+                    <div className="space-y-1.5">
+                      {atmMapping.tactics.map((t, ti) => (
+                        <div key={ti} className="rounded border border-slate-700/40 bg-slate-800/20 p-2">
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="outline" className="h-4 border-emerald-500/40 bg-emerald-500/10 px-1 text-[9px] text-emerald-300">
+                              {t.evidenceType}
+                            </Badge>
+                            <span className="text-[11px] font-semibold text-slate-100">{t.name}</span>
+                          </div>
+                          <p className="mt-1 text-[10px] text-slate-400">{t.reasoning}</p>
+                          {t.techniques.length > 0 && (
+                            <div className="mt-1.5 space-y-1">
+                              {t.techniques.map((tech, thi) => (
+                                <div key={thi} className="flex items-start gap-1.5 rounded bg-slate-900/40 px-1.5 py-1">
+                                  <Badge variant="outline" className="h-3.5 shrink-0 border-slate-600 px-1 font-mono text-[8px] text-slate-400">
+                                    {tech.id}
+                                  </Badge>
+                                  <Badge variant="outline" className={`h-3.5 shrink-0 border px-1 text-[8px] ${tech.evidenceType === "observed" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300"}`}>
+                                    {tech.evidenceType}
+                                  </Badge>
+                                  <span className="text-[10px] text-slate-300">{tech.name}</span>
+                                  <span className="text-[9px] text-slate-500">— {tech.reasoning}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Known / Inferred / Unknown */}
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <EvidenceList label="Known Facts" items={atmMapping.knownFacts} tone="text-emerald-300" />
+                    <EvidenceList label="Inferences" items={atmMapping.inferences} tone="text-amber-300" />
+                    <EvidenceList label="Unknowns" items={atmMapping.unknowns} tone="text-slate-400" />
+                  </div>
+
+                  {/* Confidence + notes */}
+                  <div className="flex items-center gap-2 border-t border-slate-700/40 pt-2">
+                    <Badge variant="outline" className={`h-5 border px-1.5 text-[10px] ${
+                      atmMapping.confidence === "high" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" :
+                      atmMapping.confidence === "medium" ? "border-amber-500/40 bg-amber-500/10 text-amber-300" :
+                      "border-slate-600 bg-slate-700/20 text-slate-400"
+                    }`}>
+                      Confidence: {atmMapping.confidence}
+                    </Badge>
+                    <p className="text-[10px] text-slate-400">{atmMapping.analyticalNotes}</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="py-2 text-[11px] text-slate-500">
+                  Click "Map to ATM" to run the full 5-step attacker-intent-first ATM mapping methodology on this threat.
+                </p>
+              )}
             </div>
 
             {/* IOCs section */}
@@ -330,6 +447,31 @@ function Field({ label, value }: { label: string; value: string }) {
     <div className="min-w-0 break-words">
       <span className="text-slate-500">{label}: </span>
       <span className="font-medium text-slate-200">{value}</span>
+    </div>
+  );
+}
+
+function ContextRow({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-slate-500">
+        <Icon className="h-3 w-3" /> {label}
+      </p>
+      <p className="mt-0.5 break-words text-slate-300">{value}</p>
+    </div>
+  );
+}
+
+function EvidenceList({ label, items, tone }: { label: string; items: string[]; tone: string }) {
+  return (
+    <div className="min-w-0">
+      <p className={`text-[10px] font-semibold uppercase tracking-wider ${tone}`}>{label} ({items.length})</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {items.slice(0, 5).map((item, i) => (
+          <li key={i} className="text-[10px] leading-tight text-slate-400">{item}</li>
+        ))}
+        {items.length > 5 && <li className="text-[9px] text-slate-600">+{items.length - 5} more</li>}
+      </ul>
     </div>
   );
 }
