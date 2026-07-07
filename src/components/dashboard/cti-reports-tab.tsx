@@ -95,7 +95,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
 
   const generate = async () => {
     setGenerating(true);
-    toast({ title: "Generating CTI Report…", description: "The LLM is composing a structured report. This typically takes 60-90 seconds." });
+    toast({ title: "Generating CTI Report…", description: "Composing a structured report. Usually completes in 30-60s; a template fallback guarantees output." });
     try {
       const config: Record<string, unknown> = {
         type: reportType,
@@ -119,15 +119,16 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
-        signal: AbortSignal.timeout(180000), // 3 minutes — LLM report generation can take 60-90s
+        // 75s client timeout — the server-side LLM call is capped at 45s and
+        // falls back to the template report, so the server always responds
+        // well within this window.
+        signal: AbortSignal.timeout(75000),
       });
-      // Handle non-JSON responses (server timeout returns HTML error page)
+      // Handle non-JSON responses (gateway/proxy timeout returns HTML error page)
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         throw new Error(
-          res.status === 504 || res.status === 502
-            ? "Report generation timed out — the LLM is generating a complex report. Please try again in a moment."
-            : `Server returned ${res.status}. The report may be too large or the LLM is busy. Try fewer sections or a shorter time range.`
+          `Server returned ${res.status} (non-JSON). The gateway may have timed out — please try again.`
         );
       }
       const json = await res.json();
@@ -135,11 +136,12 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
 
       setReport(json.report);
       setShowForm(false);
-      toast({ title: "CTI Report generated", description: json.report.title });
+      const methodNote = json.report.method === "template" ? " (template fallback — LLM busy)" : "";
+      toast({ title: "CTI Report generated", description: json.report.title + methodNote });
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("abort") || msg.includes("timeout") || msg.includes("Timeout")) {
-        toast({ title: "Report generation timed out", description: "The LLM took too long. Try fewer sections or a shorter time range.", variant: "destructive" });
+        toast({ title: "Report generation timed out", description: "The request took too long. The server should auto-fall back to a template — please try again.", variant: "destructive" });
       } else {
         toast({ title: "Report generation failed", description: msg, variant: "destructive" });
       }

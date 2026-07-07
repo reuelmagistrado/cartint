@@ -1,0 +1,570 @@
+     1→"use client";
+     2→
+     3→import { useState, useEffect } from "react";
+     4→import { motion, AnimatePresence } from "framer-motion";
+     5→import { Card } from "@/components/ui/card";
+     6→import { Button } from "@/components/ui/button";
+     7→import { Badge } from "@/components/ui/badge";
+     8→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+     9→import { ScrollArea } from "@/components/ui/scroll-area";
+    10→import { useToast } from "@/hooks/use-toast";
+    11→import {
+    12→  FileText, Loader2, FileDown, Printer, ChevronLeft, Settings2,
+    13→  Calendar, AlertTriangle, Shield, Globe, Users, Target,
+    14→} from "lucide-react";
+    15→import ReactMarkdown from "react-markdown";
+    16→import remarkGfm from "remark-gfm";
+    17→import type { Threat } from "./types";
+    18→
+    19→type ReportType = "weekly-digest" | "threat-actor-profile" | "incident-report" | "campaign-analysis" | "sector-assessment" | "ad-hoc";
+    20→
+    21→const REPORT_TYPES: { value: ReportType; label: string; desc: string; defaultDays: number }[] = [
+    22→  { value: "weekly-digest", label: "Weekly Threat Digest", desc: "Automated weekly summary of all automotive threats", defaultDays: 7 },
+    23→  { value: "threat-actor-profile", label: "Threat Actor Profile", desc: "Deep-dive on a single threat actor", defaultDays: 30 },
+    24→  { value: "incident-report", label: "Incident Report", desc: "Focused report on one specific threat", defaultDays: 30 },
+    25→  { value: "campaign-analysis", label: "Campaign Analysis", desc: "Coordinated campaign analysis across multiple threats", defaultDays: 14 },
+    26→  { value: "sector-assessment", label: "Sector Threat Assessment", desc: "Threats targeting a specific automotive sector", defaultDays: 30 },
+    27→  { value: "ad-hoc", label: "Ad-Hoc Report", desc: "Analyst-defined report with manual threat selection", defaultDays: 30 },
+    28→];
+    29→
+    30→const ALL_SECTIONS = [
+    31→  "Threat Overview", "Adversary Interest Analysis", "Intelligence Levels",
+    32→  "Diamond Model", "Cyber Kill Chain", "ATM Mapping", "Collection Methodology",
+    33→  "Artifacts", "Risk Assessment", "Source Reliability", "Recommendations",
+    34→  "Distribution", "Glossary",
+    35→];
+    36→
+    37→type GeneratedReport = {
+    38→  id: string;
+    39→  title: string;
+    40→  type: ReportType;
+    41→  content: string;
+    42→  summary: string;
+    43→  period: string;
+    44→  metadata: {
+    45→    priority: string;
+    46→    tlp: string;
+    47→    companyName: string;
+    48→    reportId: string;
+    49→    date: string;
+    50→    reliability: string;
+    51→  };
+    52→  threatIds: string[];
+    53→  generatedAt: string;
+    54→  method: string;
+    55→};
+    56→
+    57→export function CtiReportsTab({ threats, actors, categories, countries }: {
+    58→  threats: Threat[];
+    59→  actors: string[];
+    60→  categories: string[];
+    61→  countries: string[];
+    62→}) {
+    63→  const { toast } = useToast();
+    64→  const [showForm, setShowForm] = useState(true);
+    65→  const [generating, setGenerating] = useState(false);
+    66→  const [report, setReport] = useState<GeneratedReport | null>(null);
+    67→
+    68→  // Form state
+    69→  const [reportType, setReportType] = useState<ReportType>("weekly-digest");
+    70→  const [timeRange, setTimeRange] = useState(7);
+    71→  const [threatActor, setThreatActor] = useState("all");
+    72→  const [sector, setSector] = useState("all");
+    73→  const [campaignFilter, setCampaignFilter] = useState<"actor" | "sector" | "country">("actor");
+    74→  const [campaignValue, setCampaignValue] = useState("all");
+    75→  const [priority, setPriority] = useState("High");
+    76→  const [tlp, setTlp] = useState("TLP:AMBER");
+    77→  const [companyName, setCompanyName] = useState("");
+    78→  const [selectedSections, setSelectedSections] = useState<string[]>(ALL_SECTIONS);
+    79→  const [selectedThreatIds, setSelectedThreatIds] = useState<string[]>([]);
+    80→  const [singleThreatId, setSingleThreatId] = useState("all");
+    81→
+    82→  const currentReportType = REPORT_TYPES.find((r) => r.value === reportType);
+    83→
+    84→  const toggleSection = (section: string) => {
+    85→    setSelectedThreatIds((prev) =>
+    86→      prev.includes(section) ? prev.filter((s) => s !== section) : [...prev, section],
+    87→    );
+    88→  };
+    89→
+    90→  const toggleThreatSelection = (id: string) => {
+    91→    setSelectedThreatIds((prev) =>
+    92→      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id],
+    93→    );
+    94→  };
+    95→
+    96→  const generate = async () => {
+    97→    setGenerating(true);
+    98→    toast({ title: "Generating CTI Report…", description: "The LLM is composing a structured report. This typically takes 60-90 seconds." });
+    99→    try {
+   100→      const config: Record<string, unknown> = {
+   101→        type: reportType,
+   102→        timeRangeDays: timeRange,
+   103→        priority: priority.toLowerCase(),
+   104→        tlp,
+   105→        companyName,
+   106→        sections: selectedSections,
+   107→      };
+   108→
+   109→      if (reportType === "threat-actor-profile" && threatActor !== "all") config.threatActor = threatActor;
+   110→      if (reportType === "sector-assessment" && sector !== "all") config.sector = sector;
+   111→      if (reportType === "incident-report" && singleThreatId !== "all") config.singleThreatId = singleThreatId;
+   112→      if (reportType === "campaign-analysis") {
+   113→        config.campaignFilter = campaignFilter;
+   114→        config.campaignFilterValue = campaignValue !== "all" ? campaignValue : undefined;
+   115→      }
+   116→      if (reportType === "ad-hoc" && selectedThreatIds.length > 0) config.threatIds = selectedThreatIds;
+   117→
+   118→      const res = await fetch("/api/cti-reports/generate", {
+   119→        method: "POST",
+   120→        headers: { "Content-Type": "application/json" },
+   121→        body: JSON.stringify(config),
+   122→        signal: AbortSignal.timeout(180000), // 3 minutes — LLM report generation can take 60-90s
+   123→      });
+   124→      // Handle non-JSON responses (server timeout returns HTML error page)
+   125→      const contentType = res.headers.get("content-type") || "";
+   126→      if (!contentType.includes("application/json")) {
+   127→        throw new Error(
+   128→          res.status === 504 || res.status === 502
+   129→            ? "Report generation timed out — the LLM is generating a complex report. Please try again in a moment."
+   130→            : `Server returned ${res.status}. The report may be too large or the LLM is busy. Try fewer sections or a shorter time range.`
+   131→        );
+   132→      }
+   133→      const json = await res.json();
+   134→      if (!res.ok || !json.ok) throw new Error(json.error || "Generation failed");
+   135→
+   136→      setReport(json.report);
+   137→      setShowForm(false);
+   138→      toast({ title: "CTI Report generated", description: json.report.title });
+   139→    } catch (e) {
+   140→      const msg = (e as Error).message;
+   141→      if (msg.includes("abort") || msg.includes("timeout") || msg.includes("Timeout")) {
+   142→        toast({ title: "Report generation timed out", description: "The LLM took too long. Try fewer sections or a shorter time range.", variant: "destructive" });
+   143→      } else {
+   144→        toast({ title: "Report generation failed", description: msg, variant: "destructive" });
+   145→      }
+   146→    } finally {
+   147→      setGenerating(false);
+   148→    }
+   149→  };
+   150→
+   151→  const exportMarkdown = () => {
+   152→    if (!report) return;
+   153→    const blob = new Blob([report.content], { type: "text/markdown" });
+   154→    const url = URL.createObjectURL(blob);
+   155→    const a = document.createElement("a");
+   156→    a.href = url;
+   157→    a.download = `${report.id}.md`;
+   158→    a.click();
+   159→    URL.revokeObjectURL(url);
+   160→  };
+   161→
+   162→  const exportJson = () => {
+   163→    if (!report) return;
+   164→    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+   165→    const url = URL.createObjectURL(blob);
+   166→    const a = document.createElement("a");
+   167→    a.href = url;
+   168→    a.download = `${report.id}.json`;
+   169→    a.click();
+   170→    URL.revokeObjectURL(url);
+   171→  };
+   172→
+   173→  const printReport = () => {
+   174→    if (!report) return;
+   175→    const w = window.open("", "_blank", "width=820,height=900");
+   176→    if (!w) return;
+   177→    w.document.open();
+   178→    w.document.write(`<html><head><title>${report.title}</title>
+   179→<style>
+   180→@page { margin: 18mm 16mm; }
+   181→body { font-family: -apple-system, sans-serif; color: #0f172a; background: #fff; margin: 0; padding: 32px; line-height: 1.55; font-size: 13px; }
+   182→.header { border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 20px; }
+   183→.brand { font-size: 11px; font-weight: 700; color: #10b981; text-transform: uppercase; }
+   184→h1 { font-size: 20px; margin: 4px 0 6px; }
+   185→.meta { font-size: 11px; color: #64748b; }
+   186→h2 { color: #064e3b; font-size: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; margin-top: 22px; }
+   187→h3 { font-size: 13px; }
+   188→table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 8px 0; }
+   189→th, td { border: 1px solid #e2e8f0; padding: 4px 8px; text-align: left; }
+   190→th { background: #f1f5f9; }
+   191→strong { color: #0f172a; }
+   192→.footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; }
+   193→</style></head><body>
+   194→<div class="header"><div class="brand">CARTINT — Automotive Threat Intelligence</div>
+   195→<h1>${report.title}</h1>
+   196→<div class="meta">Report ID: ${report.metadata.reportId} · ${report.metadata.date} · ${report.metadata.tlp} · Priority: ${report.metadata.priority}</div>
+   197→</div>
+   198→${renderMarkdownToHtml(report.content)}
+   199→<div class="footer">CARTINT — Dark-web OSINT · LLM-classified · Auto-ISAC ATM · Generated: ${report.generatedAt} · Method: ${report.method}</div>
+   200→</body></html>`);
+   201→    w.document.close();
+   202→    setTimeout(() => { w.focus(); w.print(); }, 400);
+   203→  };
+   204→
+   205→  return (
+   206→    <div className="space-y-4">
+   207→      <AnimatePresence mode="wait">
+   208→        {showForm ? (
+   209→          <motion.div key="form" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+   210→            <Card className="border-slate-700/60 bg-slate-900/40 p-5">
+   211→              <div className="mb-4 flex items-center gap-2">
+   212→                <FileText className="h-5 w-5 text-emerald-400" />
+   213→                <h2 className="text-base font-semibold text-slate-100">Generate CTI Report</h2>
+   214→              </div>
+   215→
+   216→              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+   217→                {/* Left column: report type + time range */}
+   218→                <div className="space-y-4">
+   219→                  {/* Report Type */}
+   220→                  <div>
+   221→                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Report Type</label>
+   222→                    <div className="space-y-1.5">
+   223→                      {REPORT_TYPES.map((rt) => (
+   224→                        <button
+   225→                          key={rt.value}
+   226→                          onClick={() => { setReportType(rt.value); setTimeRange(rt.defaultDays); }}
+   227→                          className={`flex w-full items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${
+   228→                            reportType === rt.value
+   229→                              ? "border-emerald-500/40 bg-emerald-500/10"
+   230→                              : "border-slate-700 bg-slate-900/40 hover:border-slate-600"
+   231→                          }`}
+   232→                        >
+   233→                          <div className={`mt-0.5 h-3 w-3 shrink-0 rounded-full border-2 ${reportType === rt.value ? "border-emerald-500 bg-emerald-500" : "border-slate-600"}`} />
+   234→                          <div>
+   235→                            <p className={`text-xs font-medium ${reportType === rt.value ? "text-emerald-200" : "text-slate-200"}`}>{rt.label}</p>
+   236→                            <p className="text-[10px] text-slate-500">{rt.desc}</p>
+   237→                          </div>
+   238→                        </button>
+   239→                      ))}
+   240→                    </div>
+   241→                  </div>
+   242→
+   243→                  {/* Time Range */}
+   244→                  <div>
+   245→                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+   246→                      <Calendar className="mr-1 inline h-3 w-3" /> Time Range
+   247→                    </label>
+   248→                    <div className="flex gap-2">
+   249→                      {[7, 14, 30].map((d) => (
+   250→                        <button
+   251→                          key={d}
+   252→                          onClick={() => setTimeRange(d)}
+   253→                          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+   254→                            timeRange === d
+   255→                              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+   256→                              : "border-slate-700 text-slate-400 hover:bg-slate-800"
+   257→                          }`}
+   258→                        >
+   259→                          {d} days
+   260→                        </button>
+   261→                      ))}
+   262→                    </div>
+   263→                  </div>
+   264→                </div>
+   265→
+   266→                {/* Right column: conditional fields */}
+   267→                <div className="space-y-4">
+   268→                  {/* Threat Actor Profile — actor selector */}
+   269→                  {reportType === "threat-actor-profile" && (
+   270→                    <div>
+   271→                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+   272→                        <Users className="mr-1 inline h-3 w-3" /> Threat Actor
+   273→                      </label>
+   274→                      <Select value={threatActor} onValueChange={setThreatActor}>
+   275→                        <SelectTrigger className="border-slate-700 bg-slate-900/60 text-xs text-slate-200">
+   276→                          <SelectValue />
+   277→                        </SelectTrigger>
+   278→                        <SelectContent className="border-slate-700 bg-slate-950">
+   279→                          <SelectItem value="all">All actors</SelectItem>
+   280→                          {actors.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+   281→                        </SelectContent>
+   282→                      </Select>
+   283→                    </div>
+   284→                  )}
+   285→
+   286→                  {/* Sector Assessment — sector selector */}
+   287→                  {reportType === "sector-assessment" && (
+   288→                    <div>
+   289→                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+   290→                        <Target className="mr-1 inline h-3 w-3" /> Sector
+   291→                      </label>
+   292→                      <Select value={sector} onValueChange={setSector}>
+   293→                        <SelectTrigger className="border-slate-700 bg-slate-900/60 text-xs text-slate-200">
+   294→                          <SelectValue />
+   295→                        </SelectTrigger>
+   296→                        <SelectContent className="border-slate-700 bg-slate-950">
+   297→                          <SelectItem value="all">All sectors</SelectItem>
+   298→                          {categories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+   299→                        </SelectContent>
+   300→                      </Select>
+   301→                    </div>
+   302→                  )}
+   303→
+   304→                  {/* Incident Report — single threat selector */}
+   305→                  {reportType === "incident-report" && (
+   306→                    <div>
+   307→                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+   308→                        <AlertTriangle className="mr-1 inline h-3 w-3" /> Select Threat
+   309→                      </label>
+   310→                      <Select value={singleThreatId} onValueChange={setSingleThreatId}>
+   311→                        <SelectTrigger className="border-slate-700 bg-slate-900/60 text-xs text-slate-200">
+   312→                          <SelectValue />
+   313→                        </SelectTrigger>
+   314→                        <SelectContent className="max-h-[200px] border-slate-700 bg-slate-950">
+   315→                          <SelectItem value="all">Auto-select most recent</SelectItem>
+   316→                          {threats.slice(0, 30).map((t) => (
+   317→                            <SelectItem key={t.id} value={t.id}>{t.title.slice(0, 50)}</SelectItem>
+   318→                          ))}
+   319→                        </SelectContent>
+   320→                      </Select>
+   321→                    </div>
+   322→                  )}
+   323→
+   324→                  {/* Campaign Analysis — filter type + value */}
+   325→                  {reportType === "campaign-analysis" && (
+   326→                    <div className="space-y-2">
+   327→                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Campaign Filter</label>
+   328→                      <div className="flex gap-2">
+   329→                        {(["actor", "sector", "country"] as const).map((f) => (
+   330→                          <button
+   331→                            key={f}
+   332→                            onClick={() => setCampaignFilter(f)}
+   333→                            className={`rounded border px-2 py-1 text-[10px] capitalize ${campaignFilter === f ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-slate-700 text-slate-400"}`}
+   334→                          >
+   335→                            By {f}
+   336→                          </button>
+   337→                        ))}
+   338→                      </div>
+   339→                      <Select value={campaignValue} onValueChange={setCampaignValue}>
+   340→                        <SelectTrigger className="border-slate-700 bg-slate-900/60 text-xs text-slate-200">
+   341→                          <SelectValue />
+   342→                        </SelectTrigger>
+   343→                        <SelectContent className="border-slate-700 bg-slate-950">
+   344→                          <SelectItem value="all">All</SelectItem>
+   345→                          {(campaignFilter === "actor" ? actors : campaignFilter === "sector" ? categories : countries).map((v) => (
+   346→                            <SelectItem key={v} value={v}>{v}</SelectItem>
+   347→                          ))}
+   348→                        </SelectContent>
+   349→                      </Select>
+   350→                    </div>
+   351→                  )}
+   352→
+   353→                  {/* Ad-Hoc — threat multi-select */}
+   354→                  {reportType === "ad-hoc" && (
+   355→                    <div>
+   356→                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+   357→                        Select Threats ({selectedThreatIds.length} selected)
+   358→                      </label>
+   359→                      <ScrollArea className="h-[150px] rounded border border-slate-700 bg-slate-900/40">
+   360→                        <div className="p-2 space-y-1">
+   361→                          {threats.slice(0, 50).map((t) => (
+   362→                            <label key={t.id} className="flex items-center gap-2 rounded p-1 hover:bg-slate-800/40 cursor-pointer">
+   363→                              <input
+   364→                                type="checkbox"
+   365→                                checked={selectedThreatIds.includes(t.id)}
+   366→                                onChange={() => toggleThreatSelection(t.id)}
+   367→                                className="h-3 w-3 accent-emerald-500"
+   368→                              />
+   369→                              <span className="truncate text-[10px] text-slate-300">{t.title.slice(0, 50)}</span>
+   370→                            </label>
+   371→                          ))}
+   372→                        </div>
+   373→                      </ScrollArea>
+   374→                    </div>
+   375→                  )}
+   376→
+   377→                  {/* Priority + TLP + Company */}
+   378→                  <div className="grid grid-cols-2 gap-2">
+   379→                    <div>
+   380→                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Priority</label>
+   381→                      <Select value={priority} onValueChange={setPriority}>
+   382→                        <SelectTrigger className="border-slate-700 bg-slate-900/60 text-xs text-slate-200"><SelectValue /></SelectTrigger>
+   383→                        <SelectContent className="border-slate-700 bg-slate-950">
+   384→                          <SelectItem value="Critical">Critical</SelectItem>
+   385→                          <SelectItem value="High">High</SelectItem>
+   386→                          <SelectItem value="Medium">Medium</SelectItem>
+   387→                          <SelectItem value="Low">Low</SelectItem>
+   388→                        </SelectContent>
+   389→                      </Select>
+   390→                    </div>
+   391→                    <div>
+   392→                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">TLP</label>
+   393→                      <Select value={tlp} onValueChange={setTlp}>
+   394→                        <SelectTrigger className="border-slate-700 bg-slate-900/60 text-xs text-slate-200"><SelectValue /></SelectTrigger>
+   395→                        <SelectContent className="border-slate-700 bg-slate-950">
+   396→                          <SelectItem value="TLP:WHITE">TLP:WHITE</SelectItem>
+   397→                          <SelectItem value="TLP:GREEN">TLP:GREEN</SelectItem>
+   398→                          <SelectItem value="TLP:AMBER">TLP:AMBER</SelectItem>
+   399→                          <SelectItem value="TLP:RED">TLP:RED</SelectItem>
+   400→                        </SelectContent>
+   401→                      </Select>
+   402→                    </div>
+   403→                  </div>
+   404→                  <div>
+   405→                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Company Name</label>
+   406→                    <input
+   407→                      value={companyName}
+   408→                      onChange={(e) => setCompanyName(e.target.value)}
+   409→                      placeholder="[Organization Name Withheld]"
+   410→                      className="h-8 w-full rounded border border-slate-700 bg-slate-900/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
+   411→                    />
+   412→                  </div>
+   413→                </div>
+   414→              </div>
+   415→
+   416→              {/* Sections */}
+   417→              <div className="mt-4">
+   418→                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Include Sections</label>
+   419→                <div className="flex flex-wrap gap-1.5">
+   420→                  {ALL_SECTIONS.map((s) => {
+   421→                    const isOn = selectedSections.includes(s);
+   422→                    const toggle = () => setSelectedSections((prev) => isOn ? prev.filter((x) => x !== s) : [...prev, s]);
+   423→                    return (
+   424→                      <button
+   425→                        key={s}
+   426→                        onClick={toggle}
+   427→                        className={`rounded border px-2 py-1 text-[10px] transition-colors ${
+   428→                          isOn ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-slate-700 text-slate-500"
+   429→                        }`}
+   430→                      >
+   431→                        {isOn ? "✓ " : ""}{s}
+   432→                      </button>
+   433→                    );
+   434→                  })}
+   435→                </div>
+   436→              </div>
+   437→
+   438→              {/* Actions */}
+   439→              <div className="mt-5 flex justify-end gap-2">
+   440→                <Button variant="outline" size="sm" className="border-slate-700 text-slate-400" onClick={() => { setShowForm(true); setReport(null); }}>
+   441→                  Cancel
+   442→                </Button>
+   443→                <Button
+   444→                  size="sm"
+   445→                  onClick={generate}
+   446→                  disabled={generating}
+   447→                  className="border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+   448→                >
+   449→                  {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+   450→                  {generating ? "Generating…" : "Generate Report"}
+   451→                </Button>
+   452→              </div>
+   453→            </Card>
+   454→          </motion.div>
+   455→        ) : (
+   456→          <motion.div key="report" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+   457→            {report && (
+   458→              <Card className="border-slate-700/60 bg-slate-900/40">
+   459→                {/* Report header */}
+   460→                <div className="flex items-center justify-between border-b border-slate-700/60 p-4">
+   461→                  <div className="flex items-center gap-2">
+   462→                    <Button size="sm" variant="ghost" className="h-7 text-slate-400" onClick={() => { setShowForm(true); setReport(null); }}>
+   463→                      <ChevronLeft className="h-4 w-4" /> New Report
+   464→                    </Button>
+   465→                    <span className="text-xs font-semibold text-slate-100">{report.title}</span>
+   466→                    <Badge variant="outline" className={`h-4 border px-1 text-[9px] ${report.method === "llm" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
+   467→                      {report.method === "llm" ? "LLM" : "Template"}
+   468→                    </Badge>
+   469→                  </div>
+   470→                  <div className="flex items-center gap-1.5">
+   471→                    <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={printReport}>
+   472→                      <Printer className="h-3.5 w-3.5" /> PDF
+   473→                    </Button>
+   474→                    <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={exportMarkdown}>
+   475→                      <FileDown className="h-3.5 w-3.5" /> .md
+   476→                    </Button>
+   477→                    <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={exportJson}>
+   478→                      <FileDown className="h-3.5 w-3.5" /> .json
+   479→                    </Button>
+   480→                  </div>
+   481→                </div>
+   482→
+   483→                {/* Report metadata bar */}
+   484→                <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 px-4 py-2 text-[10px] text-slate-500">
+   485→                  <span><strong className="text-slate-300">ID:</strong> {report.metadata.reportId}</span>
+   486→                  <span><strong className="text-slate-300">Date:</strong> {report.metadata.date}</span>
+   487→                  <span><strong className="text-slate-300">Priority:</strong> {report.metadata.priority}</span>
+   488→                  <span><strong className="text-slate-300">TLP:</strong> {report.metadata.tlp}</span>
+   489→                  <span><strong className="text-slate-300">Reliability:</strong> {report.metadata.reliability}</span>
+   490→                </div>
+   491→
+   492→                {/* Report content */}
+   493→                <ScrollArea className="max-h-[calc(100vh-220px)]">
+   494→                  <div className="p-5">
+   495→                    <ReactMarkdown
+   496→                      remarkPlugins={[remarkGfm]}
+   497→                      components={{
+   498→                        h1: ({ children }) => <h1 className="mt-5 mb-3 text-lg font-bold text-emerald-200">{children}</h1>,
+   499→                        h2: ({ children }) => <h2 className="mt-5 mb-2 text-sm font-bold text-emerald-200 border-b border-slate-800 pb-1">{children}</h2>,
+   500→                        h3: ({ children }) => <h3 className="mt-4 mb-1.5 text-[13px] font-semibold text-slate-100">{children}</h3>,
+   501→                        h4: ({ children }) => <h4 className="mt-3 mb-1 text-[12px] font-semibold text-slate-200">{children}</h4>,
+   502→                        p: ({ children }) => <p className="my-2 text-[13px] leading-relaxed text-slate-300">{children}</p>,
+   503→                        strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
+   504→                        em: ({ children }) => <em className="italic text-slate-400">{children}</em>,
+   505→                        ul: ({ children }) => <ul className="my-2 ml-5 list-disc space-y-1">{children}</ul>,
+   506→                        ol: ({ children }) => <ol className="my-2 ml-5 list-decimal space-y-1">{children}</ol>,
+   507→                        li: ({ children }) => <li className="text-[13px] text-slate-300">{children}</li>,
+   508→                        hr: () => <hr className="my-4 border-slate-800" />,
+   509→                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300">{children}</a>,
+   510→                        table: ({ children }) => <table className="my-3 w-full border-collapse text-xs">{children}</table>,
+   511→                        thead: ({ children }) => <thead className="bg-slate-800/40">{children}</thead>,
+   512→                        th: ({ children }) => <th className="border border-slate-700 px-2 py-1 text-left font-semibold text-slate-200">{children}</th>,
+   513→                        td: ({ children }) => <td className="border border-slate-800 px-2 py-1 text-slate-400">{children}</td>,
+   514→                        blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-emerald-500/40 pl-3 italic text-slate-400">{children}</blockquote>,
+   515→                        code: ({ children }) => <code className="rounded bg-slate-800/60 px-1 py-0.5 font-mono text-[11px] text-emerald-300">{children}</code>,
+   516→                        pre: ({ children }) => <pre className="my-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 overflow-x-auto">{children}</pre>,
+   517→                      }}
+   518→                    >
+   519→                      {stripCodeFences(report.content)}
+   520→                    </ReactMarkdown>
+   521→                  </div>
+   522→                </ScrollArea>
+   523→              </Card>
+   524→            )}
+   525→          </motion.div>
+   526→        )}
+   527→      </AnimatePresence>
+   528→    </div>
+   529→  );
+   530→}
+   531→
+   532→// Strip ```markdown ... ``` code fences that the LLM may wrap around the output
+   533→function stripCodeFences(content: string): string {
+   534→  let cleaned = content.trim();
+   535→  // Remove leading ```markdown or ```md or ```
+   536→  cleaned = cleaned.replace(/^```(?:markdown|md)?\s*\n/i, "");
+   537→  // Remove trailing ```
+   538→  cleaned = cleaned.replace(/\n```\s*$/i, "");
+   539→  return cleaned.trim();
+   540→}
+   541→
+   542→function renderMarkdownToHtml(content: string): string {
+   543→  // Simple markdown-to-HTML for the print window (no react-markdown available there)
+   544→  const cleaned = stripCodeFences(content);
+   545→  let html = cleaned
+   546→    .replace(/^#### (.+)/gm, "<h4>$1</h4>")
+   547→    .replace(/^### (.+)/gm, "<h3>$1</h3>")
+   548→    .replace(/^## (.+)/gm, "<h2>$1</h2>")
+   549→    .replace(/^# (.+)/gm, "<h1>$1</h1>")
+   550→    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+   551→    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+   552→    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+   553→    .replace(/^---$/gm, "<hr>")
+   554→    .replace(/^\s*[-*]\s(.+)/gm, "<li>$1</li>")
+   555→    .replace(/(<li>[\s\S]*?<\/li>)(?=\n\n|\n##|\n#|\Z)/g, "<ul>$1</ul>");
+   556→
+   557→  // Convert tables
+   558→  const tableLines = cleaned.split("\n").filter((l) => l.startsWith("| "));
+   559→  if (tableLines.length > 0) {
+   560→    html = html.replace(/^\|(.+)\|$/gm, (match) => {
+   561→      const cells = match.split("|").filter((c) => c.trim());
+   562→      const tds = cells.map((c) => `<td>${c.trim()}</td>`).join("");
+   563→      return `<tr>${tds}</tr>`;
+   564→    });
+   565→    html = html.replace(/(<tr>[\s\S]*?<\/tr>)(?=\n\n|\n##|\n#|\Z)/g, "<table>$1</table>");
+   566→  }
+   567→
+   568→  return html;
+   569→}
+   570→

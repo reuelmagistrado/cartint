@@ -1,0 +1,582 @@
+     1→// CTI Report Generator — produces structured automotive threat intelligence reports.
+     2→//
+     3→// Supports 6 report types:
+     4→//   1. Weekly Threat Digest (7d)
+     5→//   2. Threat Actor Profile (30d or custom)
+     6→//   3. Incident Report (single threat)
+     7→//   4. Campaign Analysis (14d or 30d)
+     8→//   5. Sector Threat Assessment (30d)
+     9→//   6. Ad-Hoc Report (custom threat selection)
+    10→//
+    11→// Each report is generated via LLM with a structured prompt based on the
+    12→// CARTINT CTI Report Template, falling back to a template generator on
+    13→// content-filter errors.
+    14→
+    15→import ZAI from "z-ai-web-dev-sdk";
+    16→import { db } from "@/lib/db";
+    17→import { RELEVANCE_THRESHOLD } from "@/lib/scraper";
+    18→import { isContentFilterError } from "@/lib/scraper/heuristic";
+    19→import { ATM_TACTICS } from "@/lib/atm";
+    20→
+    21→export type ReportType =
+    22→  | "weekly-digest"
+    23→  | "threat-actor-profile"
+    24→  | "incident-report"
+    25→  | "campaign-analysis"
+    26→  | "sector-assessment"
+    27→  | "ad-hoc";
+    28→
+    29→export type ReportConfig = {
+    30→  type: ReportType;
+    31→  timeRangeDays: number;
+    32→  customStartDate?: string;
+    33→  customEndDate?: string;
+    34→  threatActor?: string;
+    35→  sector?: string;
+    36→  threatIds?: string[];
+    37→  campaignFilter?: "actor" | "sector" | "country";
+    38→  campaignFilterValue?: string;
+    39→  singleThreatId?: string;
+    40→  priority?: "low" | "medium" | "high" | "critical";
+    41→  tlp?: "TLP:WHITE" | "TLP:GREEN" | "TLP:AMBER" | "TLP:RED";
+    42→  companyName?: string;
+    43→  sections?: string[];
+    44→};
+    45→
+    46→export type GeneratedReport = {
+    47→  id: string;
+    48→  title: string;
+    49→  type: ReportType;
+    50→  content: string;
+    51→  summary: string;
+    52→  period: string;
+    53→  metadata: {
+    54→    priority: string;
+    55→    tlp: string;
+    56→    companyName: string;
+    57→    reportId: string;
+    58→    date: string;
+    59→    reliability: string;
+    60→  };
+    61→  threatIds: string[];
+    62→  generatedAt: string;
+    63→  method: "llm" | "template";
+    64→};
+    65→
+    66→const REPORT_TYPE_META: Record<ReportType, { title: string; defaultDays: number }> = {
+    67→  "weekly-digest": { title: "Weekly Threat Digest", defaultDays: 7 },
+    68→  "threat-actor-profile": { title: "Threat Actor Profile", defaultDays: 30 },
+    69→  "incident-report": { title: "Incident Report", defaultDays: 30 },
+    70→  "campaign-analysis": { title: "Campaign Analysis", defaultDays: 14 },
+    71→  "sector-assessment": { title: "Sector Threat Assessment", defaultDays: 30 },
+    72→  "ad-hoc": { title: "Ad-Hoc Report", defaultDays: 30 },
+    73→};
+    74→
+    75→let zaiPromise: Promise<unknown> | null = null;
+    76→async function getZai() {
+    77→  if (!zaiPromise) zaiPromise = ZAI.create();
+    78→  return zaiPromise;
+    79→}
+    80→
+    81→export async function generateCtiReport(config: ReportConfig): Promise<GeneratedReport> {
+    82→  const meta = REPORT_TYPE_META[config.type];
+    83→  const days = config.timeRangeDays || meta.defaultDays;
+    84→  const since = new Date(Date.now() - days * 86400000);
+    85→
+    86→  // Gather threat data based on report type
+    87→  const threats = await gatherThreats(config, since);
+    88→
+    89→  // Build the LLM prompt
+    90→  const prompt = buildReportPrompt(config, threats, days);
+    91→
+    92→  let content = "";
+    93→  let method: "llm" | "template" = "llm";
+    94→
+    95→  try {
+    96→    const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
+    97→    const completion = await zai.chat.completions.create({
+    98→      messages: [
+    99→        { role: "assistant", content: prompt.systemPrompt },
+   100→        { role: "user", content: prompt.userPrompt },
+   101→      ],
+   102→      thinking: { type: "disabled" },
+   103→    });
+   104→    content = completion.choices[0]?.message?.content ?? "";
+   105→  } catch (err) {
+   106→    if (isContentFilterError(err)) {
+   107→      content = buildTemplateReport(config, threats, days);
+   108→      method = "template";
+   109→    } else {
+   110→      content = buildTemplateReport(config, threats, days);
+   111→      method = "template";
+   112→    }
+   113→  }
+   114→
+   115→  const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+   116→  const title = `${meta.title} — ${config.type === "weekly-digest" ? `${days}d` : config.threatActor || config.sector || `${days}d`} — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+   117→
+   118→  // Extract summary from content (first paragraph after "## Threat Overview" or first 400 chars)
+   119→  const summaryMatch = content.match(/## (?:Threat Overview|Executive Summary)[\s\S]*?\n([\s\S]*?)(?:\n##|\n---|\Z)/i);
+   120→  const summary = summaryMatch ? summaryMatch[1].trim().slice(0, 400) : content.slice(0, 400);
+   121→
+   122→  return {
+   123→    id: reportId,
+   124→    title,
+   125→    type: config.type,
+   126→    content,
+   127→    summary,
+   128→    period: `${days}d`,
+   129→    metadata: {
+   130→      priority: config.priority || "high",
+   131→      tlp: config.tlp || "TLP:AMBER",
+   132→      companyName: config.companyName || "",
+   133→      reportId,
+   134→      date: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+   135→      reliability: "B-2 (Usually reliable / Probably true)",
+   136→    },
+   137→    threatIds: threats.map((t) => t.id),
+   138→    generatedAt: new Date().toISOString(),
+   139→    method,
+   140→  };
+   141→}
+   142→
+   143→// Gather threats based on report type and config
+   144→async function gatherThreats(config: ReportConfig, since: Date) {
+   145→  const accepted = {
+   146→    isAutomotive: true,
+   147→    relevanceScore: { gte: RELEVANCE_THRESHOLD },
+   148→  } as const;
+   149→
+   150→  switch (config.type) {
+   151→    case "incident-report": {
+   152→      if (!config.singleThreatId) return [];
+   153→      return db.threat.findMany({ where: { id: config.singleThreatId, ...accepted } });
+   154→    }
+   155→    case "threat-actor-profile": {
+   156→      return db.threat.findMany({
+   157→        where: { ...accepted, actor: config.threatActor || undefined, attackDate: { gte: since } },
+   158→        orderBy: { attackDate: "desc" }, take: 50,
+   159→      });
+   160→    }
+   161→    case "campaign-analysis": {
+   162→      const where: Record<string, unknown> = { ...accepted, attackDate: { gte: since } };
+   163→      if (config.campaignFilter === "actor" && config.campaignFilterValue) where.actor = config.campaignFilterValue;
+   164→      if (config.campaignFilter === "sector" && config.campaignFilterValue) where.automotiveCategory = config.campaignFilterValue;
+   165→      if (config.campaignFilter === "country" && config.campaignFilterValue) where.country = config.campaignFilterValue;
+   166→      return db.threat.findMany({ where, orderBy: { attackDate: "desc" }, take: 50 });
+   167→    }
+   168→    case "sector-assessment": {
+   169→      return db.threat.findMany({
+   170→        where: { ...accepted, automotiveCategory: config.sector || undefined, attackDate: { gte: since } },
+   171→        orderBy: { attackDate: "desc" }, take: 50,
+   172→      });
+   173→    }
+   174→    case "ad-hoc": {
+   175→      if (!config.threatIds?.length) return [];
+   176→      return db.threat.findMany({ where: { id: { in: config.threatIds }, ...accepted } });
+   177→    }
+   178→    case "weekly-digest":
+   179→    default: {
+   180→      return db.threat.findMany({
+   181→        where: { ...accepted, attackDate: { gte: since } },
+   182→        orderBy: { attackDate: "desc" }, take: 100,
+   183→      });
+   184→    }
+   185→  }
+   186→}
+   187→
+   188→// Build the LLM prompt for report generation
+   189→function buildReportPrompt(config: ReportConfig, threats: any[], days: number) {
+   190→  const meta = REPORT_TYPE_META[config.type];
+   191→  const sections = config.sections || [
+   192→    "Threat Overview", "Adversary Interest Analysis", "Intelligence Levels",
+   193→    "Diamond Model", "Cyber Kill Chain", "ATM Mapping", "Collection Methodology",
+   194→    "Artifacts", "Risk Assessment", "Source Reliability", "Recommendations",
+   195→    "Distribution", "Glossary",
+   196→  ];
+   197→
+   198→  const threatData = threats.map((t) => ({
+   199→    title: t.title,
+   200→    description: t.description,
+   201→    severity: t.severity,
+   202→    source: t.sourceName,
+   203→    actor: t.actor,
+   204→    victim: t.victimOrg,
+   205→    country: t.country,
+   206→    category: t.automotiveCategory,
+   207→    atmTactic: t.atmTactic,
+   208→    atmTechnique: t.atmTechnique,
+   209→    dataTypes: t.dataTypes,
+   210→    attackDate: t.attackDate?.toISOString(),
+   211→    relevanceScore: t.relevanceScore,
+   212→  }));
+   213→
+   214→  const systemPrompt = `You are a senior automotive cyber threat intelligence analyst generating a formal CTI report for the CARTINT dashboard.
+   215→
+   216→Generate a ${meta.title} covering the last ${days} days. The report must follow the CARTINT CTI Report Template format with these sections:
+   217→${sections.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}
+   218→
+   219→Format requirements:
+   220→- Use Markdown formatting
+   221→- Include a Report Metadata table at the top (Report ID, Date, Priority, Source Reliability, Sensitivity/TLP, Company Name, Report Title)
+   222→- Include "Intelligence Requirements Addressed" section
+   223→- Include "Data Sources" section listing CARTINT's sources
+   224→- Use tables for structured data (ATM mapping, kill chain, diamond model, risk assessment, etc.)
+   225→- Include "Key Terminology" glossary at the end
+   226→- End with the CARTINT generation footer
+   227→- Priority: ${config.priority || "High"}
+   228→- TLP: ${config.tlp || "TLP:AMBER"}
+   229→- Company: ${config.companyName || "[Organization Name Withheld]"}
+   230→
+   231→ATM Taxonomy available:
+   232→${ATM_TACTICS.map((t) => `${t.tacticId}: ${t.name} (${t.techniques.map((x) => x.id + " " + x.name).join("; ")})`).join("\n")}
+   233→
+   234→Diamond Model of Intrusion Analysis:
+   235→- Adversary → Uses → Infrastructure
+   236→- Adversary → Develops → Capability
+   237→- Infrastructure → Deployed via → Capability
+   238→- Infrastructure → Connects to → Victim
+   239→- Capability → Exploits → Victim
+   240→
+   241→Cyber Kill Chain stages: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control, Actions on Objective
+   242→
+   243→Report type-specific requirements:
+   244→${getReportTypeRequirements(config)}
+   245→
+   246→Output ONLY the Markdown report. No explanation outside the report.`;
+   247→
+   248→  const userPrompt = `Generate the ${meta.title} using the following threat data from the CARTINT database:
+   249→
+   250→Report Type: ${config.type}
+   251→Time Range: Last ${days} days
+   252→${config.threatActor ? `Threat Actor: ${config.threatActor}\n` : ""}
+   253→${config.sector ? `Sector: ${config.sector}\n` : ""}
+   254→${config.singleThreatId ? `Single Threat ID: ${config.singleThreatId}\n` : ""}
+   255→${config.campaignFilter ? `Campaign Filter: ${config.campaignFilter} = ${config.campaignFilterValue}\n` : ""}
+   256→${config.threatIds?.length ? `Selected Threat IDs: ${config.threatIds.join(", ")}\n` : ""}
+   257→
+   258→Threat Data (${threats.length} threats):
+   259→${JSON.stringify(threatData, null, 2)}`;
+   260→
+   261→  return { systemPrompt, userPrompt };
+   262→}
+   263→
+   264→function getReportTypeRequirements(config: ReportConfig): string {
+   265→  switch (config.type) {
+   266→    case "weekly-digest":
+   267→      return `- Total threats accepted/rejected, FP rate, source health summary
+   268→- New threat actors observed
+   269→- New CVEs affecting automotive components
+   270→- Trending ATM tactics (which tactics saw the most activity)
+   271→- Severity breakdown
+   272→- Top countries targeted
+   273→- Recommended monitoring actions`;
+   274→    case "threat-actor-profile":
+   275→      return `- Actor name, first seen, activity trend
+   276→- All threats attributed to this actor (with ATM mappings)
+   277→- Diamond Model analysis (Adversary/Infrastructure/Victim/Capabilities)
+   278→- Attack playbook (behavioral patterns, preferred ATM techniques)
+   279→- Recommended defensive actions against this actor`;
+   280→    case "incident-report":
+   281→      return `- Full threat metadata (ID, title, severity, source, date)
+   282→- Description and IoCs
+   283→- ATM tactic/technique mapping
+   284→- Cyber Kill Chain reconstruction
+   285→- Affected victim details
+   286→- Related threats
+   287→- Risk assessment
+   288→- Immediate recommended actions`;
+   289→    case "campaign-analysis":
+   290→      return `- Campaign timeline (chronological threat events)
+   291→- Common ATM techniques across the campaign
+   292→- Victim overlap analysis
+   293→- Kill chain comparison across incidents
+   294→- Campaign impact assessment
+   295→- Strategic/Operational/Tactical intelligence breakdown`;
+   296→    case "sector-assessment":
+   297→      return `- All threats targeting the selected sector
+   298→- Top threat actors active against this sector
+   299→- Most common ATM tactics used
+   300→- Geographic distribution of victims
+   301→- Data types being exfiltrated/sold
+   302→- Vulnerability landscape (CVEs)
+   303→- Strategic recommendations for sector defense`;
+   304→    case "ad-hoc":
+   305→      return `- All selected threats with their ATM mappings
+   306→- Cross-threat analysis (shared techniques, shared actors)
+   307→- Analyst notes section
+   308→- Full template with all selected sections`;
+   309→    default:
+   310→      return "";
+   311→  }
+   312→}
+   313→
+   314→// Template-based fallback report (no LLM)
+   315→function buildTemplateReport(config: ReportConfig, threats: any[], days: number): string {
+   316→  const meta = REPORT_TYPE_META[config.type];
+   317→  const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+   318→  const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+   319→  const priority = config.priority || "High";
+   320→  const tlp = config.tlp || "TLP:AMBER";
+   321→  const company = config.companyName || "[Organization Name Withheld]";
+   322→
+   323→  // Aggregate stats
+   324→  const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+   325→  const byActor = new Map<string, number>();
+   326→  const byCountry = new Map<string, number>();
+   327→  const byTactic = new Map<string, number>();
+   328→  const byCategory = new Map<string, number>();
+   329→  const bySource = new Map<string, number>();
+   330→  const actors = new Set<string>();
+   331→  const dataTypes = new Set<string>();
+   332→
+   333→  for (const t of threats) {
+   334→    bySeverity[t.severity as keyof typeof bySeverity]++;
+   335→    if (t.actor) { byActor.set(t.actor, (byActor.get(t.actor) || 0) + 1); actors.add(t.actor); }
+   336→    if (t.country) byCountry.set(t.country, (byCountry.get(t.country) || 0) + 1);
+   337→    if (t.atmTactic) byTactic.set(t.atmTactic, (byTactic.get(t.atmTactic) || 0) + 1);
+   338→    if (t.automotiveCategory) byCategory.set(t.automotiveCategory, (byCategory.get(t.automotiveCategory) || 0) + 1);
+   339→    bySource.set(t.sourceName, (bySource.get(t.sourceName) || 0) + 1);
+   340→    if (t.dataTypes) t.dataTypes.split(",").forEach((d: string) => dataTypes.add(d.trim()));
+   341→  }
+   342→
+   343→  const top = (m: Map<string, number>, n: number) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
+   344→
+   345→  const lines: string[] = [];
+   346→  lines.push(`# ${meta.title}`);
+   347→  lines.push("");
+   348→  lines.push("---");
+   349→  lines.push("");
+   350→  lines.push("## Report Metadata");
+   351→  lines.push("");
+   352→  lines.push("| Field | Value |");
+   353→  lines.push("|---|---|");
+   354→  lines.push(`| **Report ID** | ${reportId} |`);
+   355→  lines.push(`| **Date** | ${date} |`);
+   356→  lines.push(`| **Priority** | ${priority} |`);
+   357→  lines.push(`| **Source & Information Reliability** | B-2 (Usually reliable / Probably true) |`);
+   358→  lines.push(`| **Sensitivity** | ${tlp} |`);
+   359→  lines.push(`| **Company Name** | ${company} |`);
+   360→  lines.push(`| **Report Title** | ${meta.title} — ${config.threatActor || config.sector || `${days}d window`} |`);
+   361→  lines.push("");
+   362→  lines.push("## Intelligence Requirements Addressed");
+   363→  lines.push("");
+   364→  lines.push(`1. **IR-01:** What threats are targeting the automotive sector in the last ${days} days?`);
+   365→  lines.push(`2. **IR-02:** What automotive-specific data types are being exfiltrated and sold?`);
+   366→  lines.push(`3. **IR-03:** What Auto-ISAC ATM techniques are being used against connected-vehicle infrastructure?`);
+   367→  lines.push("");
+   368→  lines.push("## Data Sources");
+   369→  lines.push("");
+   370→  lines.push("- **darkweb** — RansomLook leak-site monitoring + Robin-style Tor search");
+   371→  lines.push("- **asrg-advisories** — ASRG (Automotive Security Research Group) security advisories");
+   372→  lines.push("- **bleepingcomputer** — Security news reporting on dark-web breaches");
+   373→  lines.push("- **thehackernews** — Threat-intel news covering dark-web actor activity");
+   374→  lines.push("- **LLM Classification** — All scraped content passed through LLM-based automotive relevance + false-positive filtering (confidence ≥ 70%)");
+   375→  lines.push("");
+   376→  lines.push("## Threat Overview");
+   377→  lines.push("");
+   378→  lines.push(`| Field | Value |`);
+   379→  lines.push(`|---|---|`);
+   380→  lines.push(`| **Report Type** | ${meta.title} |`);
+   381→  lines.push(`| **Time Range** | Last ${days} days |`);
+   382→  lines.push(`| **Total Threats** | ${threats.length} |`);
+   383→  lines.push(`| **Unique Actors** | ${actors.size} |`);
+   384→  lines.push(`| **Countries Affected** | ${byCountry.size} |`);
+   385→  lines.push(`| **Severity Breakdown** | ${bySeverity.critical} Critical / ${bySeverity.high} High / ${bySeverity.medium} Medium / ${bySeverity.low} Low |`);
+   386→  lines.push("");
+   387→
+   388→  // Threat list
+   389→  if (threats.length > 0) {
+   390→    lines.push("### Threats Included in This Report");
+   391→    lines.push("");
+   392→    lines.push("| # | Title | Severity | Actor | Source | ATM Tactic | Date |");
+   393→    lines.push("|---|---|---|---|---|---|---|");
+   394→    threats.slice(0, 30).forEach((t, i) => {
+   395→      lines.push(`| ${i + 1} | ${t.title.slice(0, 60)} | ${t.severity} | ${t.actor || "—"} | ${t.sourceName} | ${t.atmTactic || "—"} | ${t.attackDate?.toISOString().slice(0, 10) || "—"} |`);
+   396→    });
+   397→    lines.push("");
+   398→  }
+   399→
+   400→  // Adversary Interest Analysis
+   401→  lines.push("## Why the Adversary Is Interested in Automotive Targets");
+   402→  lines.push("");
+   403→  lines.push("### Assets");
+   404→  lines.push("Connected vehicles generate and transmit vast amounts of data: VINs, owner PII, GPS location history, OTA update packages, telematics backend credentials, and ECU firmware. These assets represent high-value targets for financial gain, operational disruption, and safety-critical exposure.");
+   405→  lines.push("");
+   406→  lines.push("### Data Types Observed");
+   407→  lines.push("");
+   408→  if (dataTypes.size > 0) {
+   409→    lines.push("| Data Type |");
+   410→    lines.push("|---|");
+   411→    for (const dt of [...dataTypes].slice(0, 15)) lines.push(`| ${dt} |`);
+   412→  } else {
+   413→    lines.push("No specific data types catalogued in this reporting period.");
+   414→  }
+   415→  lines.push("");
+   416→
+   417→  // Intelligence Levels
+   418→  lines.push("## Intelligence Levels");
+   419→  lines.push("");
+   420→  lines.push("### STRATEGIC");
+   421→  lines.push(`**Audience:** C-suite, Board, VSOC Leadership`);
+   422→  lines.push("");
+   423→  lines.push(`This ${meta.title} covers ${threats.length} automotive threats over the last ${days} days. ${actors.size} unique threat actors were observed targeting automotive organizations across ${byCountry.size} countries. The most active actor was ${top(byActor, 1)[0]?.[0] || "unattributed"} with ${top(byActor, 1)[0]?.[1] || 0} incidents. The most targeted sector was ${top(byCategory, 1)[0]?.[0] || "unknown"}.`);
+   424→  lines.push("");
+   425→  lines.push("### OPERATIONAL");
+   426→  lines.push(`**Audience:** VSOC Managers, Threat Intelligence Analysts`);
+   427→  lines.push("");
+   428→  lines.push(`Top threat actors: ${top(byActor, 5).map(([a, c]) => `${a} (${c})`).join(", ") || "N/A"}. Sources: ${top(bySource, 5).map(([s, c]) => `${s} (${c})`).join(", ")}.`);
+   429→  lines.push("");
+   430→  lines.push("### TACTICAL");
+   431→  lines.push(`**Audience:** SOC Analysts, Detection Engineers`);
+   432→  lines.push("");
+   433→  lines.push("Trending ATM tactics and techniques observed:");
+   434→  lines.push("");
+   435→  lines.push("| ATM Tactic | Count |");
+   436→  lines.push("|---|---|");
+   437→  for (const [tactic, count] of top(byTactic, 14)) lines.push(`| ${tactic} | ${count} |`);
+   438→  lines.push("");
+   439→
+   440→  // Diamond Model
+   441→  lines.push("## Diamond Model Analysis");
+   442→  lines.push("");
+   443→  lines.push("| Dimension | Details |");
+   444→  lines.push("|---|---|");
+   445→  lines.push(`| **Adversary** | ${actors.size} unique actors observed. Top: ${top(byActor, 3).map(([a, c]) => `${a} (${c} incidents)`).join(", ") || "Unattributed"} |`);
+   446→  lines.push(`| **Infrastructure** | Tor hidden-service leak sites, dark-web forums, cellular communication channels for C2/exfil. |`);
+   447→  lines.push(`| **Victim** | ${byCountry.size} countries affected. Top: ${top(byCountry, 5).map(([c, n]) => `${c} (${n})`).join(", ") || "Unknown"}. Sectors: ${top(byCategory, 5).map(([s, n]) => `${s} (${n})`).join(", ") || "Unknown"}. |`);
+   448→  lines.push(`| **Capabilities** | Ransomware deployment, data exfiltration, credential compromise, OTA/telematics exploitation. ATM techniques: ${top(byTactic, 5).map(([t, n]) => `${t} (${n})`).join(", ") || "N/A"}. |`);
+   449→  lines.push("");
+   450→
+   451→  // Cyber Kill Chain
+   452→  lines.push("## Cyber Kill Chain Mapping");
+   453→  lines.push("");
+   454→  lines.push("| Stage | Activity | ATM Mapping |");
+   455→  lines.push("|---|---|---|");
+   456→  lines.push("| **S1: Reconnaissance** | Target information gathering from public/OSINT sources | ATM-T0076 (Gather Target Information) |");
+   457→  lines.push("| **S2: Weaponization** | Crafting phishing emails, exploit payloads targeting automotive infrastructure | Varies by incident |");
+   458→  lines.push("| **S3: Delivery** | Phishing emails, supply chain compromise, physical access | ATM-T0015 (Phishing) / ATM-T0010 (Aftermarket Equipment) |");
+   459→  lines.push("| **S4: Exploitation** | Credential compromise, vulnerability exploitation | ATM-T0040 (Unsecured Credentials) |");
+   460→  lines.push("| **S5: Installation** | Remote access tools, persistence mechanisms | ATM-T0021 (Disable Software Update) |");
+   461→  lines.push("| **S6: Command & Control** | Cellular communication, internet communication channels | ATM-T0062 (Cellular Communication) |");
+   462→  lines.push("| **S7: Actions on Objective** | Data exfiltration, ransomware deployment, vehicle function disruption | ATM-T0063 (Internet Communication) / ATM-T0072 (DoS on Vehicle Function) |");
+   463→  lines.push("");
+   464→
+   465→  // ATM Mapping
+   466→  lines.push("## Auto-ISAC ATM Mapping");
+   467→  lines.push("");
+   468→  lines.push("| ATM Tactic | Count | Top Techniques |");
+   469→  lines.push("|---|---|---|");
+   470→  for (const [tactic, count] of top(byTactic, 14)) {
+   471→    const techs = threats.filter((t) => t.atmTactic === tactic).map((t) => t.atmTechnique).filter(Boolean);
+   472→    const uniqueTechs = [...new Set(techs)].slice(0, 3);
+   473→    lines.push(`| ${tactic} | ${count} | ${uniqueTechs.join(", ") || "—"} |`);
+   474→  }
+   475→  lines.push("");
+   476→
+   477→  // Collection Methodology
+   478→  lines.push("## Dark-Web Collection Methodology");
+   479→  lines.push("");
+   480→  lines.push("### Intelligence Lifecycle Applied");
+   481→  lines.push("");
+   482→  lines.push(`1. **Planning & Collection** — PIRs defined: automotive threat actors, data types being sold, ATM techniques observed. Collection tasked to: RansomLook API, ASRG advisories, security RSS feeds.`);
+   483→  lines.push(`2. **Processing** — Raw content processed through LLM classification: automotive relevance → false-positive filter → confidence scoring (≥ 70%). ${threats.length} threats accepted.`);
+   484→  lines.push(`3. **Analysis & Production** — Accepted threats mapped to ATM. This report is the product.`);
+   485→  lines.push(`4. **Dissemination** — Distributed via ${tlp} to authorized recipients.`);
+   486→  lines.push("");
+   487→
+   488→  // Artifacts
+   489→  lines.push("## Artifacts");
+   490→  lines.push("");
+   491→  lines.push("### Network Artifacts");
+   492→  lines.push("");
+   493→  lines.push("| Type | Description |");
+   494→  lines.push("|---|---|");
+   495→  const torUrls = threats.filter((t) => t.sourceUrl?.includes(".onion")).map((t) => t.sourceUrl);
+   496→  if (torUrls.length > 0) {
+   497→    for (const url of [...new Set(torUrls)].slice(0, 5)) lines.push(`| Tor Hidden Service | ${url} |`);
+   498→  } else {
+   499→    lines.push("| — | No Tor hidden-service URLs in this dataset |");
+   500→  }
+   501→  lines.push("");
+   502→
+   503→  // Risk Assessment
+   504→  lines.push("## Risk Assessment");
+   505→  lines.push("");
+   506→  lines.push("| Factor | Assessment | Rationale |");
+   507→  lines.push("|---|---|---|");
+   508→  const likelihood = threats.length > 10 ? "Likely (55-75%)" : threats.length > 3 ? "Possible (30-55%)" : "Unlikely (10-30%)";
+   509→  lines.push(`| **Likelihood** | **${likelihood}** | ${threats.length} automotive threats observed in ${days} days. |`);
+   510→  lines.push(`| **Impact** | **High** | ${bySeverity.critical} critical + ${bySeverity.high} high severity threats. Automotive data breach, OT disruption, regulatory exposure. |`);
+   511→  lines.push(`| **Overall Risk** | **${bySeverity.critical + bySeverity.high > 5 ? "High" : "Medium"}** | ${bySeverity.critical + bySeverity.high} critical/high threats require attention. |`);
+   512→  lines.push("");
+   513→
+   514→  // Source Reliability
+   515→  lines.push("## Source Reliability & Information Credibility");
+   516→  lines.push("");
+   517→  lines.push("| Source | Reliability | Credibility | Notes |");
+   518→  lines.push("|---|---|---|---|");
+   519→  lines.push("| darkweb (RansomLook) | B (Usually reliable) | 2 (Probably true) | Automated leak-site monitoring |");
+   520→  lines.push("| asrg-advisories | A (Completely reliable) | 1 (Confirmed) | ASRG curated automotive CVEs |");
+   521→  lines.push("| bleepingcomputer | B (Usually reliable) | 2 (Probably true) | Established security journalism |");
+   522→  lines.push("| thehackernews | B (Usually reliable) | 2 (Probably true) | Established security journalism |");
+   523→  lines.push("");
+   524→
+   525→  // Recommendations
+   526→  lines.push("## Recommendations");
+   527→  lines.push("");
+   528→  lines.push("### Immediate (0-7 days)");
+   529→  lines.push("1. Review all threats in this report for organizational relevance");
+   530→  lines.push("2. Hunt for IOCs (Tor URLs, actor names) in environment");
+   531→  lines.push("3. Verify MFA enforcement on telematics backend admin interfaces");
+   532→  lines.push("");
+   533→  lines.push("### Short-term (1-4 weeks)");
+   534→  lines.push("4. Implement network segmentation between corporate IT and telematics backend");
+   535→  lines.push("5. Deploy detection rules for cellular gateway anomalous outbound traffic");
+   536→  lines.push("6. Enhance phishing training for automotive operations staff");
+   537→  lines.push("");
+   538→  lines.push("### Long-term (1-3 months)");
+   539→  lines.push("7. Implement HSM-backed OTA signing key management");
+   540→  lines.push("8. Integrate ATM technique mapping into VSOC detection engineering");
+   541→  lines.push("9. Establish automated dark-web monitoring for organizational mentions");
+   542→  lines.push("");
+   543→
+   544→  // Distribution
+   545→  lines.push("## Distribution");
+   546→  lines.push("");
+   547→  lines.push("| Role | Dissemination |");
+   548→  lines.push("|---|---|");
+   549→  lines.push("| Head of CTI | Full report |");
+   550→  lines.push("| VSOC Lead | Full report |");
+   551→  lines.push("| CTI Analyst (Author) | Full report |");
+   552→  lines.push("| Auto-ISAC | Sanitized version (TLP:GREEN) |");
+   553→  lines.push("");
+   554→
+   555→  // TLP
+   556→  lines.push("## TLP Classification");
+   557→  lines.push("");
+   558→  lines.push(`**${tlp}** — Sensitive information shared on a need-to-know basis within the organization and Auto-ISAC partners.`);
+   559→  lines.push("");
+   560→
+   561→  // Glossary
+   562→  lines.push("## Key Terminology");
+   563→  lines.push("");
+   564→  lines.push("| Term | Definition |");
+   565→  lines.push("|---|---|");
+   566→  lines.push("| **ATM** | Auto-ISAC Automotive Threat Matrix — vehicle-domain adaptation of MITRE ATT&CK |");
+   567→  lines.push("| **VSOC** | Vehicle Security Operations Center |");
+   568→  lines.push("| **RaaS** | Ransomware-as-a-Service |");
+   569→  lines.push("| **SOCK Puppet** | Fictitious online persona for intelligence collection |");
+   570→  lines.push("| **Double Extortion** | Ransomware model: encrypt + threaten to publish |");
+   571→  lines.push("| **Telematics** | Telecommunications + informatics for remote vehicles |");
+   572→  lines.push("| **OTA** | Over-the-Air — wireless software/firmware updates |");
+   573→  lines.push("| **ECU** | Electronic Control Unit — embedded vehicle system controller |");
+   574→  lines.push("");
+   575→
+   576→  lines.push("---");
+   577→  lines.push("");
+   578→  lines.push(`*This report was generated with CARTINT — Automotive Threat Intelligence Dashboard. Data collected from OSINT sources, processed through LLM-based automotive relevance classification (confidence ≥ 70%), and mapped to the Auto-ISAC Automotive Threat Matrix. Generation method: ${"template"} (LLM fallback).*`);
+   579→
+   580→  return lines.join("\n");
+   581→}
+   582→

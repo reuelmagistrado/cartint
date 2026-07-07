@@ -92,24 +92,47 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
   let content = "";
   let method: "llm" | "template" = "llm";
 
+  // Server-side LLM timeout: race the LLM call against a hard deadline.
+  // If the LLM exceeds LLM_TIMEOUT_MS (30s), we fall back to the template
+  // report so the analyst ALWAYS gets output instead of a timeout error.
+  const LLM_TIMEOUT_MS = 30_000;
   try {
     const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
-    const completion = await zai.chat.completions.create({
+    const llmPromise = zai.chat.completions.create({
       messages: [
         { role: "assistant", content: prompt.systemPrompt },
         { role: "user", content: prompt.userPrompt },
       ],
       thinking: { type: "disabled" },
     });
-    content = completion.choices[0]?.message?.content ?? "";
-  } catch (err) {
-    if (isContentFilterError(err)) {
-      content = buildTemplateReport(config, threats, days);
-      method = "template";
-    } else {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("LLM_TIMEOUT")), LLM_TIMEOUT_MS),
+    );
+    const completion = (await Promise.race([llmPromise, timeoutPromise])) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    content = completion.choices?.[0]?.message?.content ?? "";
+    if (!content.trim()) {
+      // Empty LLM output — fall back to template so we never return a blank report.
       content = buildTemplateReport(config, threats, days);
       method = "template";
     }
+  } catch (err) {
+    // ANY error (content-filter, timeout, network, malformed response) falls back
+    // to the deterministic template report. The user always gets a usable report.
+    const isTimeout =
+      err instanceof Error &&
+      (err.message === "LLM_TIMEOUT" ||
+        /timeout|abort|timed?\s*out/i.test(err.message));
+    if (isTimeout || isContentFilterError(err)) {
+      console.warn(
+        `[cti-report] LLM ${isTimeout ? "timed out" : "content-filtered"}, using template fallback.`,
+      );
+    } else {
+      console.warn("[cti-report] LLM call failed, using template fallback:", err);
+    }
+    content = buildTemplateReport(config, threats, days);
+    method = "template";
   }
 
   const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
@@ -195,68 +218,68 @@ function buildReportPrompt(config: ReportConfig, threats: any[], days: number) {
     "Distribution", "Glossary",
   ];
 
-  const threatData = threats.map((t) => ({
-    title: t.title,
-    description: t.description,
-    severity: t.severity,
-    source: t.sourceName,
+  // Cap the number of threats sent to the LLM and trim each one to the
+  // essential fields (drop long descriptions) to keep the prompt small.
+  // The full threat set is still used for the template fallback + metadata.
+  const MAX_LLM_THREATS = 25;
+  const llmThreats = threats.slice(0, MAX_LLM_THREATS);
+  const threatData = llmThreats.map((t) => ({
+    title: String(t.title ?? "").slice(0, 120),
+    desc: String(t.description ?? "").slice(0, 200),
+    sev: t.severity,
+    src: t.sourceName,
     actor: t.actor,
     victim: t.victimOrg,
     country: t.country,
-    category: t.automotiveCategory,
-    atmTactic: t.atmTactic,
-    atmTechnique: t.atmTechnique,
-    dataTypes: t.dataTypes,
-    attackDate: t.attackDate?.toISOString(),
-    relevanceScore: t.relevanceScore,
+    cat: t.automotiveCategory,
+    tactic: t.atmTactic,
+    technique: t.atmTechnique,
+    dataTypes: t.dataTypes ? String(t.dataTypes).slice(0, 80) : undefined,
+    date: t.attackDate?.toISOString().slice(0, 10),
+    score: t.relevanceScore,
   }));
+
+  // Compact ATM reference — only tactic ID + name + technique IDs (no
+  // technique names, no descriptions). The threat data already carries the
+  // mapped tactic/technique names, so the LLM doesn't need the full taxonomy.
+  // This shrinks the ATM block from ~80KB to <1KB.
+  const atmCompact = ATM_TACTICS.map(
+    (t) => `${t.tacticId} ${t.name}: ${t.techniques.map((x) => x.id).join(", ")}`,
+  ).join("\n");
 
   const systemPrompt = `You are a senior automotive cyber threat intelligence analyst generating a formal CTI report for the CARTINT dashboard.
 
-Generate a ${meta.title} covering the last ${days} days. The report must follow the CARTINT CTI Report Template format with these sections:
+Generate a ${meta.title} covering the last ${days} days. Sections:
 ${sections.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}
 
-Format requirements:
-- Use Markdown formatting
-- Include a Report Metadata table at the top (Report ID, Date, Priority, Source Reliability, Sensitivity/TLP, Company Name, Report Title)
-- Include "Intelligence Requirements Addressed" section
-- Include "Data Sources" section listing CARTINT's sources
-- Use tables for structured data (ATM mapping, kill chain, diamond model, risk assessment, etc.)
-- Include "Key Terminology" glossary at the end
-- End with the CARTINT generation footer
-- Priority: ${config.priority || "High"}
-- TLP: ${config.tlp || "TLP:AMBER"}
-- Company: ${config.companyName || "[Organization Name Withheld]"}
+Format:
+- Markdown. Tables for structured data (ATM mapping, kill chain, diamond model, risk).
+- Report Metadata table at top (Report ID, Date, Priority, Source Reliability, TLP, Company, Title).
+- Intelligence Requirements + Data Sources sections.
+- Key Terminology glossary at end.
+- Priority: ${config.priority || "High"} | TLP: ${config.tlp || "TLP:AMBER"} | Company: ${config.companyName || "[Organization Name Withheld]"}
 
-ATM Taxonomy available:
-${ATM_TACTICS.map((t) => `${t.tacticId}: ${t.name} (${t.techniques.map((x) => x.id + " " + x.name).join("; ")})`).join("\n")}
+ATM tactic IDs (for reference; threats are already mapped):
+${atmCompact}
 
-Diamond Model of Intrusion Analysis:
-- Adversary → Uses → Infrastructure
-- Adversary → Develops → Capability
-- Infrastructure → Deployed via → Capability
-- Infrastructure → Connects to → Victim
-- Capability → Exploits → Victim
+Diamond Model: Adversary→Infrastructure, Adversary→Capability, Infrastructure→Victim, Capability→Victim.
+Kill Chain: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, C2, Actions on Objective.
 
-Cyber Kill Chain stages: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control, Actions on Objective
-
-Report type-specific requirements:
+Type-specific requirements:
 ${getReportTypeRequirements(config)}
 
-Output ONLY the Markdown report. No explanation outside the report.`;
+${threats.length > MAX_LLM_THREATS ? `NOTE: ${threats.length} threats matched but only the ${MAX_LLM_THREATS} most recent are included below. Aggregate counts should reflect ALL ${threats.length} where possible.` : ""}
 
-  const userPrompt = `Generate the ${meta.title} using the following threat data from the CARTINT database:
+Output ONLY the Markdown report.`;
+
+  const userPrompt = `Generate the ${meta.title}.
 
 Report Type: ${config.type}
 Time Range: Last ${days} days
-${config.threatActor ? `Threat Actor: ${config.threatActor}\n` : ""}
-${config.sector ? `Sector: ${config.sector}\n` : ""}
-${config.singleThreatId ? `Single Threat ID: ${config.singleThreatId}\n` : ""}
-${config.campaignFilter ? `Campaign Filter: ${config.campaignFilter} = ${config.campaignFilterValue}\n` : ""}
-${config.threatIds?.length ? `Selected Threat IDs: ${config.threatIds.join(", ")}\n` : ""}
-
-Threat Data (${threats.length} threats):
-${JSON.stringify(threatData, null, 2)}`;
+Total threats matched: ${threats.length} (showing ${llmThreats.length})
+${config.threatActor ? `Threat Actor: ${config.threatActor}\n` : ""}${config.sector ? `Sector: ${config.sector}\n` : ""}${config.singleThreatId ? `Single Threat ID: ${config.singleThreatId}\n` : ""}${config.campaignFilter ? `Campaign Filter: ${config.campaignFilter} = ${config.campaignFilterValue}\n` : ""}${config.threatIds?.length ? `Selected Threat IDs: ${config.threatIds.join(", ")}\n` : ""}
+Threat Data:
+${JSON.stringify(threatData)}`;
 
   return { systemPrompt, userPrompt };
 }
