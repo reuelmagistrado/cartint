@@ -315,6 +315,8 @@ ${getReportTypeRequirements(config)}
 
 ${threats.length > 50 ? `NOTE: ${threats.length} threats matched the selected time range. ALL ${threats.length} are included in the data below. Analyze every threat for accurate statistics.` : `All ${threats.length} threats matching the selected time range are included below.`}
 
+CRITICAL: You MUST complete ALL ${sections.length} sections listed above. Do NOT stop mid-report. Do NOT omit any section. If you are running low on output space, be more concise in earlier sections so you can complete all of them. Use tables (compact) instead of long prose paragraphs to save space. Every section must have at least a brief table or paragraph.
+
 Output ONLY the Markdown report.`;
 
   const userPrompt = `Generate the ${meta.title}.

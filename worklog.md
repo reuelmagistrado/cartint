@@ -958,3 +958,42 @@ Work Log:
 
 Stage Summary:
 - The threat-feed-service (port 3003) and watchdog-scheduler (port 3004) are now self-healing. When the System Status panel polls `/api/system-status` and detects either service is down, the endpoint automatically spawns the `start-services.sh` script (detached via `child_process.spawn` + `unref()`) to restart it. The services persist because they're spawned by the Next.js server process (which is persistent) and detached from the request lifecycle. A 30s cooldown prevents restart loops. Verified: both services come back up within ~5s of being detected down, the System Status panel shows "OPERATIONAL" with all three services green, and the services stay up (uptime increasing over time). The "fetch failed" error is resolved.
+
+---
+Task ID: 39 (fix streaming network errors + trimmed reports)
+Agent: main (Z.ai Code)
+Task: Fix "Report generation failed: network error" and "sometimes the report produced is trimmed and not all sections are complete."
+
+Work Log:
+- **Root cause 1 — "Controller is already closed" error:** The streaming route's `sendMetadata()` function called `controller.enqueue()` directly (not `safeEnqueue`), and there was no `cancel()` handler on the ReadableStream. When the client disconnected (browser tab lost focus, modal closed, connection dropped), the stream controller was closed by the browser, but the server kept reading from the LLM and trying to write to the closed controller — throwing "TypeError: Invalid state: Controller is already closed" and aborting the stream. The client saw this as a "network error".
+
+- **Root cause 2 — Trimmed/incomplete reports:** (a) The LLM had no `max_tokens` setting, so it may have hit the default token limit (often 4096) before completing all 13 sections. (b) The prompt didn't explicitly instruct the LLM to complete ALL sections, so it might stop mid-report if it thought it was "done enough".
+
+- **Fix 1 — Server-side streaming route (route.ts):**
+  * Added a `cancel()` handler to the ReadableStream that sets `clientDisconnected = true` and releases/cancels the LLM reader. This is called automatically by the browser when the client disconnects.
+  * Made `sendMetadata()` use `safeEnqueue()` instead of `controller.enqueue()` directly — so it can't throw if the controller is closed.
+  * Added `clientDisconnected` flag checked before every `safeEnqueue` and in the reader loop (`while (true) { if (clientDisconnected) break; ... }`) — the server stops reading from the LLM as soon as the client disconnects.
+  * Added `max_tokens: 8192` to the LLM API call — allows ~30-40KB of Markdown output, enough for all 13 sections with 47 threats.
+  * Simplified the error handling: removed the separate `closed` flag (consolidated into `clientDisconnected`), removed redundant `safeClose` (the controller auto-closes when the stream ends).
+  * The reader is tracked in an outer scope (`llmReader`) so `cancel()` can access it.
+
+- **Fix 2 — Prompt (cti-report-generator.ts):** Added a CRITICAL instruction to the system prompt: "You MUST complete ALL N sections listed above. Do NOT stop mid-report. Do NOT omit any section. If you are running low on output space, be more concise in earlier sections so you can complete all of them. Use tables (compact) instead of long prose paragraphs to save space."
+
+- **Fix 3 — Client-side (cti-reports-tab.tsx):**
+  * Added a 5-minute `AbortController` timeout as a safety net (the server has `maxDuration=300s`).
+  * Separated the `fetch()` call from the `reader.read()` loop with distinct error handling — fetch errors show "Network error — could not connect to the report server", while stream-read errors preserve partial content.
+  * If the stream is interrupted AFTER partial content was received, the report IS shown (with whatever sections were completed) + a warning toast: "Report partially generated — The stream was interrupted. The report may be incomplete — scroll to check all sections."
+  * If no content at all was received, shows a clear error: "Network error during streaming. The LLM connection was lost. Please try again."
+  * Properly releases the reader lock in a `finally` block.
+  * Better error categorization: "abort"/"timeout" → timeout toast, "network" → network error toast, other → generic failure toast.
+
+- **Verification (curl direct :3000):** `POST /api/cti-reports/generate` → `HTTP 200` in `41.5s`, `method: llm`, 47 threats, 8,403 bytes, 14 section headings. No "Controller is already closed" errors in dev.log.
+
+- **Verification (agent-browser via :81):** Clicked Generate Report → after 45s the modal showed the complete report with "LLM" badge and ALL 13 sections: 1. Threat Overview → 2. Adversary Interest Analysis → 3. Intelligence Levels → 4. Diamond Model → 5. Cyber Kill Chain → 6. ATM Mapping → 7. Collection Methodology → 8. Artifacts → 9. Risk Assessment → 10. Source Reliability → 11. Recommendations → 12. Distribution → 13. Glossary. No "network error" toast, no "partially generated" warning.
+
+- **Dev log:** `POST /api/cti-reports/generate 200 in 26.0s` (latest) — no controller errors, no stream failures. All recent requests completed successfully.
+
+- `bun run lint` clean; `tsc --noEmit` clean; no runtime errors.
+
+Stage Summary:
+- Fixed two streaming issues: (1) "network error" caused by "Controller is already closed" errors when the client disconnects — resolved by adding a `cancel()` handler that releases the LLM reader, making `sendMetadata` use `safeEnqueue`, and checking `clientDisconnected` before every write. (2) Trimmed/incomplete reports caused by the LLM hitting token limits — resolved by adding `max_tokens: 8192` and a prompt instruction to complete ALL sections. Also improved client-side error handling: partial content is now preserved and shown with a warning if the stream is interrupted, and network errors get clear, actionable messages. Verified: all 13 sections present in the LLM output, no controller errors in dev.log, no "network error" toasts in the browser.

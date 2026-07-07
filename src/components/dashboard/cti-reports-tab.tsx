@@ -125,20 +125,38 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
 
       // Stream the response — the server sends metadata (JSON) on line 1,
       // then the LLM-generated Markdown content token-by-token.
-      // No client timeout: streaming keeps the connection alive indefinitely.
-      const res = await fetch("/api/cti-reports/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
-      });
+      // 5-minute client timeout as a safety net (the server has maxDuration=300s).
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 300_000);
+
+      let res: Response;
+      try {
+        res = await fetch("/api/cti-reports/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+          signal: controller.signal,
+        });
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        throw new Error(
+          fetchErr instanceof Error && fetchErr.name === "AbortError"
+            ? "Request timed out after 5 minutes. The LLM may be overloaded — please try again."
+            : "Network error — could not connect to the report server. Check your connection and try again."
+        );
+      }
 
       if (!res.ok) {
+        clearTimeout(timeoutId);
         const text = await res.text().catch(() => "");
         throw new Error(text || `Server returned ${res.status}`);
       }
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error("No response stream");
+      if (!reader) {
+        clearTimeout(timeoutId);
+        throw new Error("No response stream from server");
+      }
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -146,61 +164,90 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
       let reportObj: GeneratedReport | null = null;
       let content = "";
       let lastUpdate = 0;
+      let streamError: Error | null = null;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
+          buffer += decoder.decode(value, { stream: true });
 
-        // First line is JSON metadata (up to first \n)
-        if (!metaParsed) {
-          const newlineIdx = buffer.indexOf("\n");
-          if (newlineIdx >= 0) {
-            const metaLine = buffer.slice(0, newlineIdx);
-            buffer = buffer.slice(newlineIdx + 1);
-            try {
-              reportObj = JSON.parse(metaLine) as GeneratedReport;
-              metaParsed = true;
-            } catch {
-              throw new Error("Failed to parse report metadata from stream");
+          // First line is JSON metadata (up to first \n)
+          if (!metaParsed) {
+            const newlineIdx = buffer.indexOf("\n");
+            if (newlineIdx >= 0) {
+              const metaLine = buffer.slice(0, newlineIdx);
+              buffer = buffer.slice(newlineIdx + 1);
+              try {
+                reportObj = JSON.parse(metaLine) as GeneratedReport;
+                metaParsed = true;
+              } catch {
+                throw new Error("Failed to parse report metadata from stream");
+              }
+            }
+          }
+
+          // Accumulate content and show progressive updates (throttled to 500ms)
+          if (metaParsed && buffer) {
+            content += buffer;
+            buffer = "";
+            const now = Date.now();
+            if (now - lastUpdate > 500 && reportObj) {
+              lastUpdate = now;
+              // Progressive render — update the report with partial content
+              setReport({ ...reportObj, content });
+              setStreamProgress(content);
             }
           }
         }
 
-        // Accumulate content and show progressive updates (throttled to 500ms)
+        // Process any remaining buffer
         if (metaParsed && buffer) {
           content += buffer;
-          buffer = "";
-          const now = Date.now();
-          if (now - lastUpdate > 500 && reportObj) {
-            lastUpdate = now;
-            // Progressive render — update the report with partial content
-            setReport({ ...reportObj, content });
-            setStreamProgress(content);
-          }
         }
+      } catch (readErr) {
+        // Network error during streaming — keep whatever content we received
+        streamError = readErr instanceof Error ? readErr : new Error(String(readErr));
+      } finally {
+        clearTimeout(timeoutId);
+        try { reader.releaseLock(); } catch { /* ignore */ }
       }
 
-      // Process any remaining buffer
-      if (metaParsed && buffer) {
-        content += buffer;
-      }
-
-      // Final update with complete content
-      if (reportObj) {
+      // If we got partial content, show it (even if the stream was interrupted)
+      if (reportObj && content.trim()) {
         reportObj.content = content;
         setReport({ ...reportObj });
         setStreamProgress("");
-        const methodNote = reportObj.method === "template" ? " (template fallback — content filtered)" : "";
-        toast({ title: "CTI Report generated", description: reportObj.title + methodNote });
+
+        if (streamError) {
+          // Stream was interrupted but we have partial content
+          toast({
+            title: "Report partially generated",
+            description: "The stream was interrupted. The report may be incomplete — scroll to check all sections.",
+            variant: "destructive",
+          });
+        } else {
+          const methodNote = reportObj.method === "template" ? " (template fallback — content filtered)" : "";
+          toast({ title: "CTI Report generated", description: reportObj.title + methodNote });
+        }
       } else {
+        // No content at all
+        if (streamError) {
+          throw new Error(
+            streamError.message.includes("network")
+              ? "Network error during streaming. The LLM connection was lost. Please try again."
+              : `Stream error: ${streamError.message}`
+          );
+        }
         throw new Error("No report data received from stream");
       }
     } catch (e) {
       const msg = (e as Error).message;
-      if (msg.includes("abort") || msg.includes("timeout") || msg.includes("Timeout")) {
-        toast({ title: "Report generation timed out", description: "The streaming connection was interrupted. Please try again.", variant: "destructive" });
+      if (msg.includes("abort") || msg.includes("timed out") || msg.includes("Timeout")) {
+        toast({ title: "Report generation timed out", description: "The request took too long. Please try again.", variant: "destructive" });
+      } else if (msg.includes("network") || msg.includes("Network")) {
+        toast({ title: "Network error", description: msg, variant: "destructive" });
       } else {
         toast({ title: "Report generation failed", description: msg, variant: "destructive" });
       }

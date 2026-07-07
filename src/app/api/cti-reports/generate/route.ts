@@ -21,7 +21,7 @@ export const maxDuration = 300; // 5 min — streaming keeps the gateway alive
 // Streaming is used so the LLM can take as long as it needs — the gateway
 // sees continuous data flow (tokens arriving every few hundred ms) and
 // never times out. The template fallback is used ONLY for content-filter
-// errors (error code 1301), NOT for timeouts.
+// errors (error code 1301) or when the LLM produces no output.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -89,41 +89,46 @@ export async function POST(req: NextRequest) {
 
     const encoder = new TextEncoder();
 
+    // Track the LLM reader so the cancel() handler can release it when the
+    // client disconnects. Without this, the server keeps reading from the LLM
+    // after the client is gone, causing "Controller is already closed" errors.
+    let llmReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    let clientDisconnected = false;
+
     const stream = new ReadableStream<Uint8Array>({
+      // start() runs when the client connects. It reads the LLM stream and
+      // pipes chunks to the client. If the client disconnects, cancel() is
+      // called (below), which sets clientDisconnected and releases the LLM reader.
       async start(controller) {
-        let method: "llm" | "template" = "llm";
         let content = "";
         let metadataSent = false;
-        let closed = false;
 
-        // Helper to send the metadata line (only once)
-        const sendMetadata = (m: "llm" | "template") => {
-          if (metadataSent || closed) return;
-          metadataSent = true;
-          const metaToSend = { ...reportMeta, method: m };
-          controller.enqueue(encoder.encode(JSON.stringify(metaToSend) + "\n"));
-        };
-
-        // Safe enqueue — guards against "Controller is already closed" errors
-        // which can happen if the client disconnects or the stream is aborted
-        // mid-flight (e.g., reader.read() throws after close).
+        // ALL controller writes go through these safe helpers. They catch
+        // "Controller is already closed" errors that happen when the client
+        // disconnects mid-stream.
         const safeEnqueue = (chunk: string) => {
-          if (closed) return;
+          if (clientDisconnected) return;
           try {
             controller.enqueue(encoder.encode(chunk));
           } catch {
-            closed = true;
+            clientDisconnected = true;
           }
         };
 
         const safeClose = () => {
-          if (closed) return;
-          closed = true;
+          if (clientDisconnected) return;
           try {
             controller.close();
           } catch {
             // already closed — ignore
           }
+        };
+
+        const sendMetadata = (m: "llm" | "template") => {
+          if (metadataSent || clientDisconnected) return;
+          metadataSent = true;
+          const metaToSend = { ...reportMeta, method: m };
+          safeEnqueue(JSON.stringify(metaToSend) + "\n");
         };
 
         try {
@@ -135,17 +140,24 @@ export async function POST(req: NextRequest) {
             ],
             stream: true,
             thinking: { type: "disabled" },
+            // Allow a large output so the LLM can complete ALL 13 sections
+            // without hitting a token limit (default is often 4096 which
+            // truncates long reports). 8192 tokens ≈ 30-40KB of Markdown.
+            max_tokens: 8192,
           });
 
           // The SDK returns a ReadableStream when stream:true and the response
           // is text/event-stream. Otherwise it returns the parsed JSON.
           if (result instanceof ReadableStream) {
-            const reader = result.getReader();
+            llmReader = result.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
 
             while (true) {
-              const { done, value } = await reader.read();
+              // If the client disconnected, stop reading from the LLM
+              if (clientDisconnected) break;
+
+              const { done, value } = await llmReader.read();
               if (done) break;
 
               buffer += decoder.decode(value, { stream: true });
@@ -162,10 +174,7 @@ export async function POST(req: NextRequest) {
                   const parsed = JSON.parse(data);
                   const delta = parsed.choices?.[0]?.delta?.content || "";
                   if (delta) {
-                    if (!metadataSent) {
-                      method = "llm";
-                      sendMetadata("llm");
-                    }
+                    if (!metadataSent) sendMetadata("llm");
                     content += delta;
                     safeEnqueue(delta);
                   }
@@ -176,17 +185,14 @@ export async function POST(req: NextRequest) {
             }
 
             // Process any remaining buffer
-            if (buffer.startsWith("data: ")) {
+            if (!clientDisconnected && buffer.startsWith("data: ")) {
               const data = buffer.slice(6).trim();
               if (data && data !== "[DONE]") {
                 try {
                   const parsed = JSON.parse(data);
                   const delta = parsed.choices?.[0]?.delta?.content || "";
                   if (delta) {
-                    if (!metadataSent) {
-                      method = "llm";
-                      sendMetadata("llm");
-                    }
+                    if (!metadataSent) sendMetadata("llm");
                     content += delta;
                     safeEnqueue(delta);
                   }
@@ -195,60 +201,75 @@ export async function POST(req: NextRequest) {
                 }
               }
             }
+
+            // Release the reader lock
+            try { llmReader.releaseLock(); } catch { /* ignore */ }
+            llmReader = null;
           } else {
-            // Non-streaming JSON response (fallback path in the SDK)
+            // Non-streaming JSON response (SDK fallback path)
             const json = result as { choices?: { message?: { content?: string } }[] };
             content = json.choices?.[0]?.message?.content ?? "";
           }
 
+          // If the client disconnected during streaming, we're done — don't
+          // try to write more.
+          if (clientDisconnected) return;
+
           // If the LLM produced content, we're done
           if (content.trim()) {
-            if (!metadataSent) {
-              sendMetadata("llm");
-            }
+            if (!metadataSent) sendMetadata("llm");
             safeClose();
             return;
           }
 
           // Empty LLM output — fall back to template
           console.warn("[cti-report] LLM produced empty output, using template fallback.");
-          method = "template";
           content = buildTemplateReport(config, threats, days);
           sendMetadata("template");
           safeEnqueue(content);
           safeClose();
         } catch (err) {
-          // If we already closed the stream (e.g., client disconnected), just
-          // log and return — don't try to write to a closed controller.
-          if (closed) {
-            console.warn("[cti-report] Stream already closed (client likely disconnected):", err);
+          // If the client disconnected, just return — don't try to write.
+          if (clientDisconnected) {
             return;
           }
 
-          // Content-filter error (code 1301) is the ONLY case we fall back
-          // to the template. Timeouts don't happen with streaming.
+          // Content-filter error (code 1301) — fall back to template
           if (isContentFilterError(err)) {
             console.warn("[cti-report] LLM content-filtered, using template fallback.");
-            method = "template";
             content = buildTemplateReport(config, threats, days);
             sendMetadata("template");
             safeEnqueue(content);
+            safeClose();
           } else {
             // Other errors — if we already streamed partial content, append an
             // error note; otherwise fall back to the template.
             console.error("[cti-report] LLM stream failed:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
             if (!metadataSent) {
-              method = "template";
               content = buildTemplateReport(config, threats, days);
               sendMetadata("template");
               safeEnqueue(content);
             } else {
               safeEnqueue(`\n\n---\n*Error: LLM stream interrupted (${errMsg}). Partial report shown above.*`);
             }
+            safeClose();
           }
-          safeClose();
         }
+      },
+
+      // cancel() is called when the client disconnects (closes the tab,
+      // navigates away, or the connection drops). We release the LLM reader
+      // so the server stops reading from the LLM and doesn't try to write
+      // to the closed controller.
+      cancel() {
+        clientDisconnected = true;
+        if (llmReader) {
+          try { llmReader.cancel(); } catch { /* ignore */ }
+          try { llmReader.releaseLock(); } catch { /* ignore */ }
+          llmReader = null;
+        }
+        console.log("[cti-report] Client disconnected — LLM reader released.");
       },
     });
 
