@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+
 // Unified AI provider — supports OpenAI, Anthropic, Google, Ollama, and
 // custom OpenAI-compatible endpoints.
 //
@@ -26,6 +29,8 @@ function normalizeProvider(provider: string | undefined): AIProvider {
   return SUPPORTED_PROVIDERS.includes(provider as AIProvider) ? (provider as AIProvider) : "custom";
 }
 
+const SETTINGS_PATH = path.join(process.cwd(), "db", "ai-settings.json");
+
 // Default settings — derived from environment variables at startup.
 // This way users can configure via .env OR via the Settings UI at runtime.
 const DEFAULT_SETTINGS: AISettings = {
@@ -35,10 +40,35 @@ const DEFAULT_SETTINGS: AISettings = {
   model: process.env.AI_MODEL || "",
 };
 
+function loadPersistedSettings(): AISettings | null {
+  try {
+    if (!fs.existsSync(SETTINGS_PATH)) return null;
+    const raw = JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8")) as Partial<AISettings>;
+    return {
+      provider: normalizeProvider(raw.provider),
+      apiKey: typeof raw.apiKey === "string" ? raw.apiKey : "",
+      baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl : "",
+      model: typeof raw.model === "string" ? raw.model : "",
+    };
+  } catch (e) {
+    console.warn("[ai-provider] Failed to load persisted AI settings:", e);
+    return null;
+  }
+}
+
+function persistSettings(s: AISettings): void {
+  try {
+    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
+  } catch (e) {
+    console.warn("[ai-provider] Failed to persist AI settings:", e);
+  }
+}
+
 // In-memory settings (overridable at runtime via /api/ai-settings).
 // On a fresh clone with no env vars this remains unconfigured; callers fall
 // back to heuristic/template modes.
-let settings: AISettings = { ...DEFAULT_SETTINGS };
+let settings: AISettings = loadPersistedSettings() ?? { ...DEFAULT_SETTINGS };
 
 // In-memory runtime override (set via /api/ai-settings POST).
 // When null, we use the env-derived defaults.
@@ -51,6 +81,7 @@ export function getAISettings(): AISettings {
 export function setAISettings(s: AISettings): void {
   runtimeOverride = { ...s };
   settings = { ...s };
+  persistSettings(settings);
   // Reset the cached client so the next call creates a new one with the
   // updated config.
   cachedClient = null;
@@ -63,8 +94,8 @@ export function isAIConfigured(): boolean {
     return !!s.baseUrl;
   }
   if (s.provider === "custom") {
-    // Custom OpenAI-compatible providers need both baseUrl AND apiKey
-    return !!s.baseUrl && !!s.apiKey;
+    // Custom local endpoints such as LM Studio/vLLM may not require an API key.
+    return !!s.baseUrl && !!s.model;
   }
   return !!s.apiKey;
 }

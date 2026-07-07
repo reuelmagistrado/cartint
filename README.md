@@ -201,6 +201,8 @@ AI_MODEL=your-model-id
 
 You can also configure AI at runtime from the dashboard in the CTI Reports tab through the AI Provider Settings panel. Runtime settings are in memory and are not written to `.env`.
 
+Settings saved through the dashboard are persisted locally in `db/ai-settings.json`. This file is ignored by Git because it may contain an API key. Custom OpenAI-compatible providers can be used without an API key when the local endpoint does not require one, such as LM Studio, Ollama-compatible gateways, or some vLLM deployments.
+
 ## Tor Setup Optional
 
 Tor is only needed for direct `.onion` scraping. Clearnet sources such as RansomLook, BleepingComputer, The Hacker News, and NVD do not require Tor.

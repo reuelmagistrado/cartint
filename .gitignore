@@ -50,5 +50,6 @@ test
 prompt
 
 server.log
+db/ai-settings.json
 # Skills directory
 /skills/

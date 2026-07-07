@@ -16,7 +16,7 @@ const PROVIDERS: { value: Provider; label: string; helpUrl: string; needsKey: bo
   { value: "anthropic", label: "Anthropic Claude", helpUrl: "https://console.anthropic.com/settings/keys", needsKey: true, defaultModel: "claude-sonnet-4-20250514", defaultBaseUrl: "https://api.anthropic.com/v1" },
   { value: "google", label: "Google Gemini", helpUrl: "https://aistudio.google.com/apikey", needsKey: true, defaultModel: "gemini-2.0-flash", defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
   { value: "ollama", label: "Ollama (local, free)", helpUrl: "https://ollama.com/download", needsKey: false, defaultModel: "llama3.2", defaultBaseUrl: "http://localhost:11434/v1" },
-  { value: "custom", label: "OpenAI Compatible (custom)", helpUrl: "", needsKey: true, defaultModel: "", defaultBaseUrl: "" },
+  { value: "custom", label: "OpenAI Compatible (custom)", helpUrl: "", needsKey: false, defaultModel: "", defaultBaseUrl: "" },
 ];
 
 export function AiSettingsPanel() {
@@ -120,10 +120,10 @@ export function AiSettingsPanel() {
           </div>
 
           {/* API Key */}
-          {currentProvider.needsKey && (
+          {(currentProvider.needsKey || provider === "custom") && (
             <div>
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                API Key {apiKeySet && <span className="text-emerald-400">(set — enter new to replace)</span>}
+                API Key {provider === "custom" && <span className="text-slate-500">(optional)</span>} {apiKeySet && <span className="text-emerald-400">(set — enter new to replace)</span>}
               </label>
               <input
                 type="password"
@@ -133,7 +133,7 @@ export function AiSettingsPanel() {
                 className="h-8 w-full rounded border border-slate-700 bg-slate-900/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
               />
               <p className="mt-1 text-[10px] text-slate-500">
-                This key is stored locally and only used to make API requests from this dashboard.
+                  This key is stored locally in <code>db/ai-settings.json</code> and only used to make API requests from this dashboard.
               </p>
               {currentProvider.helpUrl && (
                 <a

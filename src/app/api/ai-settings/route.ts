@@ -40,9 +40,12 @@ export async function POST(req: NextRequest) {
     }
 
     const defaults = PROVIDER_DEFAULTS[provider];
+    const current = getAISettings();
+    const incomingApiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
+    const keepExistingApiKey = current.provider === provider && !incomingApiKey;
     const newSettings = {
       provider,
-      apiKey: typeof body.apiKey === "string" ? body.apiKey : "",
+      apiKey: incomingApiKey || (keepExistingApiKey ? current.apiKey : ""),
       baseUrl: body.baseUrl || defaults.baseUrl,
       model: body.model || defaults.model,
     };
