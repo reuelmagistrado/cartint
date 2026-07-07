@@ -61,7 +61,14 @@ export async function POST(req: NextRequest) {
 
     // Pre-compute report metadata
     const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
-    const title = `${meta.title} — ${config.type === "weekly-digest" ? `${days}d` : config.threatActor || config.sector || `${days}d`} — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+    const titleSuffix = config.type === "weekly-digest"
+      ? `${days}d`
+      : config.type === "threat-actor-profile"
+      ? (config.threatActor && config.threatActor !== "all" ? config.threatActor : `all actors`)
+      : config.type === "sector-assessment"
+      ? (config.sector && config.sector !== "all" ? config.sector : `all sectors`)
+      : `${days}d`;
+    const title = `${meta.title} — ${titleSuffix} — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
     const reportMeta = {
       id: reportId,
       title,
@@ -87,13 +94,36 @@ export async function POST(req: NextRequest) {
         let method: "llm" | "template" = "llm";
         let content = "";
         let metadataSent = false;
+        let closed = false;
 
         // Helper to send the metadata line (only once)
         const sendMetadata = (m: "llm" | "template") => {
-          if (metadataSent) return;
+          if (metadataSent || closed) return;
           metadataSent = true;
           const metaToSend = { ...reportMeta, method: m };
           controller.enqueue(encoder.encode(JSON.stringify(metaToSend) + "\n"));
+        };
+
+        // Safe enqueue — guards against "Controller is already closed" errors
+        // which can happen if the client disconnects or the stream is aborted
+        // mid-flight (e.g., reader.read() throws after close).
+        const safeEnqueue = (chunk: string) => {
+          if (closed) return;
+          try {
+            controller.enqueue(encoder.encode(chunk));
+          } catch {
+            closed = true;
+          }
+        };
+
+        const safeClose = () => {
+          if (closed) return;
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // already closed — ignore
+          }
         };
 
         try {
@@ -132,13 +162,12 @@ export async function POST(req: NextRequest) {
                   const parsed = JSON.parse(data);
                   const delta = parsed.choices?.[0]?.delta?.content || "";
                   if (delta) {
-                    // First chunk: send metadata line before content
                     if (!metadataSent) {
                       method = "llm";
                       sendMetadata("llm");
                     }
                     content += delta;
-                    controller.enqueue(encoder.encode(delta));
+                    safeEnqueue(delta);
                   }
                 } catch {
                   // Non-JSON line (e.g., SSE comment) — skip
@@ -159,7 +188,7 @@ export async function POST(req: NextRequest) {
                       sendMetadata("llm");
                     }
                     content += delta;
-                    controller.enqueue(encoder.encode(delta));
+                    safeEnqueue(delta);
                   }
                 } catch {
                   // skip
@@ -177,7 +206,7 @@ export async function POST(req: NextRequest) {
             if (!metadataSent) {
               sendMetadata("llm");
             }
-            controller.close();
+            safeClose();
             return;
           }
 
@@ -186,9 +215,16 @@ export async function POST(req: NextRequest) {
           method = "template";
           content = buildTemplateReport(config, threats, days);
           sendMetadata("template");
-          controller.enqueue(encoder.encode(content));
-          controller.close();
+          safeEnqueue(content);
+          safeClose();
         } catch (err) {
+          // If we already closed the stream (e.g., client disconnected), just
+          // log and return — don't try to write to a closed controller.
+          if (closed) {
+            console.warn("[cti-report] Stream already closed (client likely disconnected):", err);
+            return;
+          }
+
           // Content-filter error (code 1301) is the ONLY case we fall back
           // to the template. Timeouts don't happen with streaming.
           if (isContentFilterError(err)) {
@@ -196,25 +232,22 @@ export async function POST(req: NextRequest) {
             method = "template";
             content = buildTemplateReport(config, threats, days);
             sendMetadata("template");
-            controller.enqueue(encoder.encode(content));
+            safeEnqueue(content);
           } else {
-            // Other errors — send an error message in the stream
+            // Other errors — if we already streamed partial content, append an
+            // error note; otherwise fall back to the template.
             console.error("[cti-report] LLM stream failed:", err);
             const errMsg = err instanceof Error ? err.message : String(err);
             if (!metadataSent) {
-              // Haven't sent anything yet — send metadata + error
               method = "template";
               content = buildTemplateReport(config, threats, days);
               sendMetadata("template");
-              controller.enqueue(encoder.encode(content));
+              safeEnqueue(content);
             } else {
-              // Already sent some content — append an error note
-              controller.enqueue(
-                encoder.encode(`\n\n---\n*Error: LLM stream interrupted (${errMsg}). Partial report shown above.*`),
-              );
+              safeEnqueue(`\n\n---\n*Error: LLM stream interrupted (${errMsg}). Partial report shown above.*`);
             }
           }
-          controller.close();
+          safeClose();
         }
       },
     });

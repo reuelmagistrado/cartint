@@ -885,3 +885,41 @@ Work Log:
 
 Stage Summary:
 - CTI reports are now **100% LLM-generated** via streaming — no template fallback for timeouts (template is used ONLY for content-filter errors, which are rare). All threats matching the selected time range are sent to the LLM (no 25-threat cap), so the analysis is accurate and reflects the actual threat data. The streaming approach keeps the gateway connection alive for as long as the LLM needs (57-68s typical), eliminating the 502 timeout that previously forced the template fallback. The user sees the report being written in real-time (progressive rendering in the modal) with the "LLM" badge confirming genuine LLM output. Verified end-to-end: curl (direct + gateway) + agent-browser all show `method: llm`, 47 threats, full 13-section reports with natural-language analysis.
+
+---
+Task ID: 37 (multi-actor Threat Actor Profile — cover ALL actors when "all" selected)
+Agent: main (Z.ai Code)
+Task: Fix the Threat Actor Profile report — when "all actors" is selected, it only profiled one actor ("the gentlemen") instead of covering all threat actors.
+
+Work Log:
+- **Root cause:** In Task 35, I added auto-select logic to `gatherThreats` for `threat-actor-profile`: when "all" was selected, it auto-picked the MOST ACTIVE actor and fetched only their threats. This was intended to "keep the report actor-focused," but it meant "all actors" silently became "one actor" — the opposite of what the user expects.
+
+- **Fix 1 — `gatherThreats` (cti-report-generator.ts):** When `threatActor` is "all" or undefined, now fetches ALL attributed threats in the window (all actors), not just the top actor. `take: 100` to cover up to 100 threats across all actors.
+
+- **Fix 2 — `buildThreatActorProfile`:** Split into two modes:
+  * **Single-actor mode** (when a specific actor is named): unchanged deep-dive — Actor Profile → Activity Timeline → Attack Playbook → Diamond Model → Defensive Actions (all for that one actor).
+  * **Multi-actor mode** (when "all" is selected): new `buildMultiActorProfile()` function produces a comparative report covering EVERY actor:
+    1. **Actor Landscape Overview** — total actors, total incidents, most active actor, countries, sectors, time-range block
+    2. **Comparative Actor Summary** — table of all actors sorted by incident count, with % of total, countries, top sector, preferred tactic, severity (C/H/M/L), first/last seen
+    3. **Per-Actor Profiles** — for EACH actor: a mini-profile (incidents, first/last seen, countries, preferred tactic, top technique, top sector, severity) + incident timeline table + diamond model table
+    4. **Cross-Actor Analysis** — shared tactics across actors (which actors use each tactic), shared sectors (which actors target each sector), geographic overlap (which actors are active in each country)
+    5. **Defensive Recommendations (All Actors)** — prioritized by volume, broadened detection, sector focus, geographic defense, actor monitoring, intelligence sharing
+
+- **Fix 3 — LLM prompt (`getReportTypeRequirements`):** Updated the threat-actor-profile case to distinguish single vs multi-actor. For multi-actor, the LLM is explicitly told: "ALL threat actors active in the window (do NOT profile only one — cover EVERY actor)" with a list of what to include for each actor + comparative summary + cross-actor analysis.
+
+- **Fix 4 — Title generation:** Updated both `generateCtiReport` and the streaming API route to build the title suffix based on report type + selection. For threat-actor-profile with "all", the title is now "Threat Actor Profile — all actors — Jul 7, 2026" (was previously just the actor name or "30d"). Same fix applied to sector-assessment ("all sectors" vs the sector name).
+
+- **Fix 5 — Subtitle:** Updated `buildTemplateReport` subtitle for multi-actor: "Comparative profile of ALL threat actors active in the window" (was "Focused profile of threat actor: most active").
+
+- **Fix 6 — Stream controller race condition:** Fixed a "Controller is already closed" error in the streaming route that occurred when the client disconnected mid-stream or the reader threw after the controller was closed. Added a `closed` flag + `safeEnqueue()` and `safeClose()` helpers that guard all controller operations with try/catch. The catch block now checks `if (closed) return;` before attempting any recovery, preventing double-close errors.
+
+- **Verification (template path, direct test):** `gatherThreats` with "all" returns 46 threats across 16 actors (the gentlemen, deadlock, akira, medusa, nova, settra, qilin, clop, kairos, alphv, interlock, m3rx, aurora, space bears, lockbit5, wallstreet). `buildTemplateReport` produces 16 per-actor profile sections (### headings) — one for EACH actor. Sections: Actor Landscape Overview → Comparative Actor Summary → Per-Actor Profiles (all 16) → Cross-Actor Analysis → Defensive Recommendations (All Actors).
+
+- **Verification (agent-browser via Caddy :81):** Selected Threat Actor Profile with "All actors" (default) → clicked Generate Report → after 35s the modal opened with title "Threat Actor Profile — all actors — Jul 7, 2026" and the LLM was streaming content showing multiple actors (deadlock, the gentlemen, medusa). After 80s the full report was complete with the "LLM" badge and 6+ distinct actors visible in the output (deadlock, the gentlemen, qilin, nova, medusa, akira). No "Template" badge — genuine LLM output covering all actors.
+
+- **Verification (dev log):** `POST /api/cti-reports/generate 200 in 71s` — streaming kept the connection alive for 71s. No "Controller is already closed" errors after the safeEnqueue/safeClose fix. No 502, no timeout.
+
+- `bun run lint` clean; `tsc --noEmit` clean; no runtime errors.
+
+Stage Summary:
+- The Threat Actor Profile report now covers ALL threat actors when "all actors" is selected, instead of silently profiling only the most active one. The report has a distinct multi-actor structure: Actor Landscape Overview → Comparative Actor Summary (all actors in one table) → Per-Actor Profiles (a mini-profile + timeline + diamond model for EACH actor) → Cross-Actor Analysis (shared tactics/sectors/geography) → Defensive Recommendations (All Actors). Both the LLM path (streaming, 71s) and the template fallback path (instant) produce the multi-actor report. The title correctly shows "all actors" instead of one actor name. Also fixed a stream controller race condition that was logging "Controller is already closed" errors. Verified: 16 actors profiled in the template path; 6+ actors visible in the LLM streaming output through the browser.

@@ -139,7 +139,15 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
   }
 
   const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
-  const title = `${meta.title} — ${config.type === "weekly-digest" ? `${days}d` : config.threatActor || config.sector || `${days}d`} — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  // Build the title suffix based on report type + selection
+  const titleSuffix = config.type === "weekly-digest"
+    ? `${days}d`
+    : config.type === "threat-actor-profile"
+    ? (config.threatActor && config.threatActor !== "all" ? config.threatActor : `all actors`)
+    : config.type === "sector-assessment"
+    ? (config.sector && config.sector !== "all" ? config.sector : `all sectors`)
+    : `${days}d`;
+  const title = `${meta.title} — ${titleSuffix} — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
   // Extract summary from content (first paragraph after "## Threat Overview" or first 400 chars)
   const summaryMatch = content.match(/## (?:Threat Overview|Executive Summary)[\s\S]*?\n([\s\S]*?)(?:\n##|\n---|\Z)/i);
@@ -186,30 +194,19 @@ export async function gatherThreats(config: ReportConfig, since: Date) {
       });
     }
     case "threat-actor-profile": {
-      // If a specific actor is named, fetch only their threats.
-      // If "all" or unspecified, auto-select the MOST ACTIVE actor in the
-      // window and profile them — this keeps the report actor-focused
-      // rather than turning into a generic threat list.
+      // If a specific actor is named, fetch only their threats (single-actor
+      // deep-dive). If "all" or unspecified, fetch ALL threats across ALL
+      // actors in the window so the report can profile every actor.
       if (config.threatActor && config.threatActor !== "all") {
         return db.threat.findMany({
           where: { ...accepted, actor: config.threatActor, attackDate: { gte: since } },
           orderBy: { attackDate: "desc" }, take: 50,
         });
       }
-      // Auto-select: find the most active actor, then fetch their threats.
-      const allRecent = await db.threat.findMany({
-        where: { ...accepted, attackDate: { gte: since }, actor: { not: null } },
-        select: { actor: true },
-      });
-      const actorCounts = new Map<string, number>();
-      for (const t of allRecent) {
-        if (t.actor) actorCounts.set(t.actor, (actorCounts.get(t.actor) || 0) + 1);
-      }
-      const topActor = [...actorCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-      if (!topActor) return [];
+      // "all actors" — fetch every attributed threat in the window
       return db.threat.findMany({
-        where: { ...accepted, actor: topActor, attackDate: { gte: since } },
-        orderBy: { attackDate: "desc" }, take: 50,
+        where: { ...accepted, attackDate: { gte: since }, actor: { not: null } },
+        orderBy: { attackDate: "desc" }, take: 100,
       });
     }
     case "campaign-analysis": {
@@ -343,11 +340,21 @@ function getReportTypeRequirements(config: ReportConfig): string {
 - Top countries targeted
 - Recommended monitoring actions`;
     case "threat-actor-profile":
-      return `- Actor name, first seen, activity trend
+      if (config.threatActor && config.threatActor !== "all") {
+        return `- Single-actor deep-dive on: ${config.threatActor}
+- Actor name, first seen, last seen, activity trend
 - All threats attributed to this actor (with ATM mappings)
 - Diamond Model analysis (Adversary/Infrastructure/Victim/Capabilities)
 - Attack playbook (behavioral patterns, preferred ATM techniques)
 - Recommended defensive actions against this actor`;
+      }
+      return `- ALL threat actors active in the window (do NOT profile only one — cover EVERY actor)
+- For each actor: name, incident count, first/last seen, countries targeted, preferred tactics, top techniques, top sectors, severity profile
+- A comparative summary table of all actors (sorted by incident count)
+- Per-actor incident timelines
+- Per-actor Diamond Model analysis
+- Cross-actor analysis: shared tactics, shared sectors, geographic overlap
+- Defensive recommendations covering ALL actors (prioritized by volume)`;
     case "incident-report":
       return `- Full threat metadata (ID, title, severity, source, date)
 - Description and IoCs
@@ -597,13 +604,15 @@ function buildWeeklyDigest(config: ReportConfig, threats: any[], days: number): 
 
 function buildThreatActorProfile(config: ReportConfig, threats: any[], days: number): string[] {
   const s = computeStats(threats);
-  // Derive the actor name from the actual threats (when "all" was selected,
-  // gatherThreats auto-selected the most active actor, so the threats are
-  // already filtered to that actor).
-  const derivedActor = topN(s.byActor, 1)[0]?.[0];
-  const actorName = (config.threatActor && config.threatActor !== "all")
-    ? config.threatActor
-    : (derivedActor ?? "Unattributed");
+  const isMultiActor = !config.threatActor || config.threatActor === "all";
+
+  // ---- MULTI-ACTOR MODE: profile ALL actors ----
+  if (isMultiActor) {
+    return buildMultiActorProfile(threats, days, s);
+  }
+
+  // ---- SINGLE-ACTOR MODE: deep-dive on the selected actor ----
+  const actorName = config.threatActor!;
   const actorThreats = threats.filter((t) => t.actor === actorName);
   const L: string[] = [];
   L.push("## Actor Profile", "");
@@ -663,6 +672,124 @@ function buildThreatActorProfile(config: ReportConfig, threats: any[], days: num
   L.push(`3. **Detect:** Build VSOC detection rules for ${topN(actorTechniques, 3).map(([t]) => t).join(", ") || "known actor techniques"}.`);
   L.push(`4. **Monitor:** Track ${actorName}'s leak site for new victim announcements; set up dark-web alerts for your org name.`);
   L.push(`5. **Prepare:** Review incident-response playbooks for ${topN(actorTactics, 1)[0]?.[0] || "initial access"} scenarios.`);
+  L.push("");
+  return L;
+}
+
+// Multi-actor profile: covers ALL actors when "all actors" is selected.
+// Produces an overview comparison + per-actor mini-profiles + cross-actor analysis.
+function buildMultiActorProfile(threats: any[], days: number, s: ThreatStats): string[] {
+  const L: string[] = [];
+  const actorList = topN(s.byActor, 50); // all actors, sorted by incident count
+  L.push("## Actor Landscape Overview", "");
+  L.push(`This report profiles **all ${actorList.length} threat actor${actorList.length === 1 ? "" : "s"}** active in the last **${days} days** (${fmtDate(s.dateRange.oldest)} → ${fmtDate(s.dateRange.newest)}). A total of **${s.total}** attributed incidents are analyzed across these actors.`, "");
+  L.push("| Field | Value |", "|---|---|");
+  L.push(...buildTimeRangeBlock(days, s));
+  L.push(`| **Total Actors** | ${actorList.length} |`);
+  L.push(`| **Total Attributed Incidents** | ${s.total} |`);
+  L.push(`| **Most Active Actor** | ${actorList[0]?.[0] || "—"} (${actorList[0]?.[1] || 0} incidents) |`);
+  L.push(`| **Countries Affected** | ${s.byCountry.size} |`);
+  L.push(`| **Sectors Targeted** | ${s.byCategory.size} |`);
+  L.push("");
+
+  // Comparative actor summary table
+  L.push("## Comparative Actor Summary", "");
+  L.push("| # | Actor | Incidents | % of Total | Countries | Top Sector | Preferred Tactic | Severity (C/H/M/L) | First Seen | Last Seen |", "|---|---|---|---|---|---|---|---|---|---|");
+  actorList.forEach(([actor, count], i) => {
+    const at = threats.filter((t) => t.actor === actor);
+    const countries = new Set(at.map((t) => t.country).filter(Boolean)).size;
+    const sectors = new Map<string, number>();
+    at.forEach((t) => { if (t.automotiveCategory) sectors.set(t.automotiveCategory, (sectors.get(t.automotiveCategory) || 0) + 1); });
+    const topSector = topN(sectors, 1)[0]?.[0] || "—";
+    const tactics = new Map<string, number>();
+    at.forEach((t) => { if (t.atmTactic) tactics.set(t.atmTactic, (tactics.get(t.atmTactic) || 0) + 1); });
+    const topTactic = topN(tactics, 1)[0]?.[0] || "—";
+    const sev = { critical: 0, high: 0, medium: 0, low: 0 };
+    at.forEach((t) => { sev[t.severity as keyof typeof sev]++; });
+    const firstSeen = at.length ? fmtDate(at.reduce((min, t) => t.attackDate < min.attackDate ? t : min).attackDate) : "—";
+    const lastSeen = at.length ? fmtDate(at.reduce((max, t) => t.attackDate > max.attackDate ? t : max).attackDate) : "—";
+    L.push(`| ${i + 1} | ${actor} | ${count} | ${Math.round((count / s.total) * 100)}% | ${countries} | ${topSector} | ${topTactic} | ${sev.critical}/${sev.high}/${sev.medium}/${sev.low} | ${firstSeen} | ${lastSeen} |`);
+  });
+  L.push("");
+
+  // Per-actor mini-profiles
+  L.push("## Per-Actor Profiles", "");
+  L.push(`Each actor is profiled below with their activity timeline, attack playbook, and diamond model.`, "");
+  for (const [actorName, count] of actorList) {
+    const at = threats.filter((t) => t.actor === actorName);
+    const actorCountries = new Map<string, number>();
+    at.forEach((t) => { if (t.country) actorCountries.set(t.country, (actorCountries.get(t.country) || 0) + 1); });
+    const actorTactics = new Map<string, number>();
+    at.forEach((t) => { if (t.atmTactic) actorTactics.set(t.atmTactic, (actorTactics.get(t.atmTactic) || 0) + 1); });
+    const actorTechniques = new Map<string, number>();
+    at.forEach((t) => { if (t.atmTechnique) actorTechniques.set(t.atmTechnique, (actorTechniques.get(t.atmTechnique) || 0) + 1); });
+    const actorSectors = new Map<string, number>();
+    at.forEach((t) => { if (t.automotiveCategory) actorSectors.set(t.automotiveCategory, (actorSectors.get(t.automotiveCategory) || 0) + 1); });
+    const sev = { critical: 0, high: 0, medium: 0, low: 0 };
+    at.forEach((t) => { sev[t.severity as keyof typeof sev]++; });
+
+    L.push(`### ${actorName} — ${count} incident${count === 1 ? "" : "s"}`, "");
+    L.push("| Attribute | Value |", "|---|---|");
+    L.push(`| **Incidents** | ${count} |`);
+    L.push(`| **First Seen** | ${fmtDate(at.length ? at.reduce((min, t) => t.attackDate < min.attackDate ? t : min).attackDate : null)} |`);
+    L.push(`| **Last Seen** | ${fmtDate(at.length ? at.reduce((max, t) => t.attackDate > max.attackDate ? t : max).attackDate : null)} |`);
+    L.push(`| **Countries Targeted** | ${actorCountries.size} (${topN(actorCountries, 5).map(([c, n]) => `${c} (${n})`).join(", ") || "—"}) |`);
+    L.push(`| **Preferred Tactic** | ${topN(actorTactics, 1)[0]?.[0] || "—"} |`);
+    L.push(`| **Top Technique** | ${topN(actorTechniques, 1)[0]?.[0] || "—"} |`);
+    L.push(`| **Top Sector** | ${topN(actorSectors, 1)[0]?.[0] || "—"} |`);
+    L.push(`| **Severity** | ${sev.critical}C / ${sev.high}H / ${sev.medium}M / ${sev.low}L |`);
+    L.push("");
+    // Incident timeline for this actor
+    L.push(`**Incident Timeline:**`, "");
+    L.push("| Date | Victim | Country | Sector | Severity | ATM Tactic |", "|---|---|---|---|---|---|");
+    [...at].sort((a, b) => new Date(a.attackDate).getTime() - new Date(b.attackDate).getTime()).forEach((t) => {
+      L.push(`| ${fmtDate(t.attackDate)} | ${t.victimOrg || "—"} | ${t.country || "—"} | ${t.automotiveCategory || "—"} | ${t.severity} | ${t.atmTactic || "—"} |`);
+    });
+    L.push("");
+    // Diamond model for this actor
+    L.push(`**Diamond Model:**`, "");
+    L.push("| Dimension | Details |", "|---|---|");
+    L.push(`| **Adversary** | ${actorName} — ${count} incidents |`);
+    L.push(`| **Infrastructure** | Tor hidden-service leak sites, dark-web forums |`);
+    L.push(`| **Victim** | ${topN(actorCountries, 3).map(([c, n]) => `${c} (${n})`).join(", ") || "Unknown"}. Sectors: ${topN(actorSectors, 3).map(([s, n]) => `${s} (${n})`).join(", ") || "Unknown"}. |`);
+    L.push(`| **Capabilities** | ${topN(actorTactics, 3).map(([t, n]) => `${t} (${n})`).join(", ") || "N/A"}. |`);
+    L.push("");
+  }
+
+  // Cross-actor analysis
+  L.push("## Cross-Actor Analysis", "");
+  L.push("### Shared Tactics Across Actors", "");
+  L.push("| ATM Tactic | Actors Using It | Total Incidents |", "|---|---|---|");
+  for (const [tactic, count] of topN(s.byTactic, 14)) {
+    const actorsUsingTactic = new Set(threats.filter((t) => t.atmTactic === tactic).map((t) => t.actor).filter(Boolean));
+    L.push(`| ${tactic} | ${actorsUsingTactic.size} (${[...actorsUsingTactic].slice(0, 5).join(", ")}${actorsUsingTactic.size > 5 ? "…" : ""}) | ${count} |`);
+  }
+  L.push("");
+
+  L.push("### Shared Sectors Across Actors", "");
+  L.push("| Sector | Actors Targeting It | Total Incidents |", "|---|---|---|");
+  for (const [sector, count] of topN(s.byCategory, 12)) {
+    const actorsTargeting = new Set(threats.filter((t) => t.automotiveCategory === sector).map((t) => t.actor).filter(Boolean));
+    L.push(`| ${sector} | ${actorsTargeting.size} (${[...actorsTargeting].slice(0, 5).join(", ")}${actorsTargeting.size > 5 ? "…" : ""}) | ${count} |`);
+  }
+  L.push("");
+
+  L.push("### Geographic Overlap", "");
+  L.push("| Country | Actors Active | Total Incidents |", "|---|---|---|");
+  for (const [country, count] of topN(s.byCountry, 15)) {
+    const actorsInCountry = new Set(threats.filter((t) => t.country === country).map((t) => t.actor).filter(Boolean));
+    L.push(`| ${country} | ${actorsInCountry.size} | ${count} |`);
+  }
+  L.push("");
+
+  // Cross-actor recommendations
+  L.push("## Defensive Recommendations (All Actors)", "");
+  L.push(`1. **Prioritize by volume:** ${actorList[0]?.[0] || "the most active actor"} (${actorList[0]?.[1] || 0} incidents) warrants the most immediate defensive attention.`);
+  L.push(`2. **Broaden detection:** Deploy VSOC rules for the top shared tactics: ${topN(s.byTactic, 3).map(([t]) => t).join(", ")}.`);
+  L.push(`3. **Sector focus:** Harden ${topN(s.byCategory, 3).map(([s]) => s).join(", ")} — the most targeted sectors across all actors.`);
+  L.push(`4. **Geographic defense:** Prioritize ${topN(s.byCountry, 3).map(([c]) => c).join(", ")} — the most affected countries.`);
+  L.push(`5. **Actor monitoring:** Track all ${actorList.length} actors' leak sites for new victim announcements; set up dark-web alerts for your org name and sector.`);
+  L.push(`6. **Intelligence sharing:** Share this multi-actor profile with Auto-ISAC and sector ISAC partners for collective defense against coordinated threat activity.`);
   L.push("");
   return L;
 }
@@ -987,10 +1114,21 @@ export function buildTemplateReport(config: ReportConfig, threats: any[], days: 
   const priority = config.priority || "High";
   const tlp = config.tlp || "TLP:AMBER";
   const company = config.companyName || "[Organization Name Withheld]";
-  const subtitle = config.type === "threat-actor-profile"
-    ? `Focused profile of threat actor: ${config.threatActor || "most active"}`
+  const titleSuffix = config.type === "weekly-digest"
+    ? `${days}d`
+    : config.type === "threat-actor-profile"
+    ? (config.threatActor && config.threatActor !== "all" ? config.threatActor : `all actors`)
     : config.type === "sector-assessment"
-    ? `Sector-focused assessment: ${config.sector || "all sectors"}`
+    ? (config.sector && config.sector !== "all" ? config.sector : `all sectors`)
+    : `${days}d`;
+  const subtitle = config.type === "threat-actor-profile"
+    ? (config.threatActor && config.threatActor !== "all"
+      ? `Focused profile of threat actor: ${config.threatActor}`
+      : `Comparative profile of ALL threat actors active in the window`)
+    : config.type === "sector-assessment"
+    ? (config.sector && config.sector !== "all"
+      ? `Sector-focused assessment: ${config.sector}`
+      : `Sector assessment of the most-targeted sector`)
     : config.type === "incident-report"
     ? `Single-incident deep-dive analysis`
     : config.type === "campaign-analysis"
@@ -1001,7 +1139,7 @@ export function buildTemplateReport(config: ReportConfig, threats: any[], days: 
 
   const lines: string[] = [];
   lines.push(...buildHeader(meta, subtitle));
-  lines.push(...buildMetadataTable(meta, reportId, date, priority, tlp, company, `${meta.title} — ${config.threatActor || config.sector || subtitle}`));
+  lines.push(...buildMetadataTable(meta, reportId, date, priority, tlp, company, `${meta.title} — ${titleSuffix || subtitle}`));
   lines.push("## Intelligence Requirements Addressed", "");
   lines.push(`1. **IR-01:** What threats are targeting the automotive sector in the last ${days} days?`);
   lines.push(`2. **IR-02:** What automotive-specific data types are being exfiltrated and sold?`);
