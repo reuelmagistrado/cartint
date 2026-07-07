@@ -134,7 +134,7 @@ export const PROVIDER_DEFAULTS: Record<AIProvider, { baseUrl: string; model: str
     baseUrl: "",
     model: "",
     label: "OpenAI Compatible (custom)",
-    needsKey: true,
+    needsKey: false,
     helpUrl: "",
   },
 };
@@ -189,7 +189,7 @@ function createCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<C
 // Google Gemini (via openai compat), and Ollama (openai compat).
 // All four expose an OpenAI-compatible /chat/completions endpoint.
 function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> {
-  const baseUrl = s.baseUrl || PROVIDER_DEFAULTS[s.provider].baseUrl;
+  const baseUrl = normalizeBaseUrl(s.baseUrl || PROVIDER_DEFAULTS[s.provider].baseUrl, s.provider);
   const model = s.model || PROVIDER_DEFAULTS[s.provider].model;
 
   if (!baseUrl || !model) {
@@ -217,7 +217,8 @@ function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptio
       ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
     };
 
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const endpoint = `${baseUrl}/chat/completions`;
+    const res = await fetch(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -226,7 +227,11 @@ function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptio
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`AI provider (${s.provider}) returned ${res.status}: ${errText.slice(0, 200)}`);
+      const contentType = res.headers.get("content-type") || "";
+      if (res.status === 404 && contentType.includes("text/html")) {
+        throw new Error(`AI provider (${s.provider}) returned 404 HTML from ${endpoint}. The Base URL likely points to the CARTINT dashboard or another web app, not an OpenAI-compatible API. Use a provider URL such as http://localhost:1234/v1 for LM Studio, http://localhost:11434/v1 for Ollama, or your provider's /v1 endpoint.`);
+      }
+      throw new Error(`AI provider (${s.provider}) returned ${res.status} from ${endpoint}: ${errText.slice(0, 200)}`);
     }
 
     if (opts.stream && res.body) {
@@ -236,6 +241,30 @@ function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptio
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     return { content: json.choices?.[0]?.message?.content ?? "" };
   };
+}
+
+function normalizeBaseUrl(rawBaseUrl: string, provider: AIProvider): string {
+  const trimmed = rawBaseUrl.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+
+  if (url.pathname.endsWith("/chat/completions")) {
+    url.pathname = url.pathname.replace(/\/chat\/completions$/, "");
+  }
+
+  // Most local OpenAI-compatible servers expose /v1. If users enter only the
+  // host (for example http://localhost:1234), make the common case work.
+  if ((provider === "custom" || provider === "ollama") && (url.pathname === "" || url.pathname === "/")) {
+    url.pathname = "/v1";
+  }
+
+  return url.toString().replace(/\/+$/, "");
 }
 
 // ---- Public API: the single entry point all CARTINT code uses ----

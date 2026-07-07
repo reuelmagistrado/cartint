@@ -174,8 +174,9 @@ export function AiSettingsPanel() {
           {provider === "custom" && (
             <div className="rounded border border-cyan-500/30 bg-cyan-500/5 p-2 text-[11px] text-cyan-300/80">
               Connect to any OpenAI-compatible API endpoint (Azure OpenAI, Together AI, Anyscale,
-              vLLM, LM Studio, etc.). Enter the Base URL, your API key, and the model ID your
-              provider supports.
+              vLLM, LM Studio, etc.). Use the AI server URL, not this dashboard URL. Examples:
+              <code className="mx-1 text-emerald-300">http://localhost:1234/v1</code> for LM Studio or
+              <code className="mx-1 text-emerald-300">http://localhost:11434/v1</code> for Ollama.
             </div>
           )}
 

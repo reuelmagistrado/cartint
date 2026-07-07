@@ -199,6 +199,8 @@ AI_BASE_URL=http://localhost:1234/v1
 AI_MODEL=your-model-id
 ```
 
+The Base URL must point to the AI API server, not the CARTINT dashboard. Do not use `http://localhost:3000`. For OpenAI-compatible providers, use the `/v1` base URL, not the full `/chat/completions` URL.
+
 You can also configure AI at runtime from the dashboard in the CTI Reports tab through the AI Provider Settings panel. Runtime settings are in memory and are not written to `.env`.
 
 Settings saved through the dashboard are persisted locally in `db/ai-settings.json`. This file is ignored by Git because it may contain an API key. Custom OpenAI-compatible providers can be used without an API key when the local endpoint does not require one, such as LM Studio, Ollama-compatible gateways, or some vLLM deployments.
