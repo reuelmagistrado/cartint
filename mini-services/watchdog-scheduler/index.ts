@@ -16,8 +16,8 @@
 import { createServer } from "http";
 
 const PORT = 3004;
-const PROJECT_ROOT = "/home/z/my-project";
-const NEXT_URL = "http://localhost:3000";
+const PROJECT_ROOT = process.env.PROJECT_ROOT || new URL("../..", import.meta.url).pathname;
+const NEXT_URL = process.env.NEXT_URL || "http://localhost:3000";
 const HEALTH_INTERVAL_MS = 30_000;
 const SCHEDULE_INTERVAL_MS = 60_000;
 const MAX_FAILS = 3;

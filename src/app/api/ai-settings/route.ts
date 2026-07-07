@@ -30,7 +30,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const provider = (body.provider as AIProvider) || "zai";
+    const provider = (body.provider as AIProvider) || "custom";
 
     if (!PROVIDER_DEFAULTS[provider]) {
       return NextResponse.json(

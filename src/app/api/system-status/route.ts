@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { spawn } from "child_process";
+import path from "path";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
 
@@ -22,6 +23,9 @@ type ServiceHealth = {
 // The Next.js server process is persistent, so its spawned children persist too.
 let startAttemptedAt: Record<number, number> = {}; // port -> last attempt timestamp (ms)
 const START_COOLDOWN_MS = 30_000; // don't retry starting more than once per 30s
+const PROJECT_ROOT = process.cwd();
+const MINI_SERVICES_DIR = path.join(PROJECT_ROOT, "mini-services");
+const START_SCRIPT = path.join(MINI_SERVICES_DIR, "start-services.sh");
 
 function tryStartService(port: number): boolean {
   const now = Date.now();
@@ -32,11 +36,11 @@ function tryStartService(port: number): boolean {
   try {
     const child = spawn(
       "bash",
-      ["/home/z/my-project/mini-services/start-services.sh"],
+      [START_SCRIPT],
       {
         detached: true,
         stdio: "ignore",
-        cwd: "/home/z/my-project/mini-services",
+        cwd: MINI_SERVICES_DIR,
       },
     );
     child.unref(); // allow the parent (Next.js) to exit independently

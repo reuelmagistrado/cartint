@@ -7,7 +7,7 @@
 #   1. Checks that bun is installed
 #   2. Installs npm dependencies
 #   3. Creates the SQLite database + pushes the Prisma schema
-#   4. Checks for AI provider config (.z-ai-config or env vars)
+#   4. Checks for AI provider config (env vars or local Ollama)
 #   5. Checks for Tor (optional, for dark-web scraping)
 #   6. Prints next steps
 
@@ -59,9 +59,13 @@ print_ok "Dependencies installed"
 
 # ─── 3. Database ────────────────────────────────────────────────────────────
 print_header "3/5  Setting up database"
-if [ ! -f "db/custom.db" ]; then
-  mkdir -p db
-  print_ok "Created db/ directory"
+mkdir -p db
+if [ ! -f ".env" ]; then
+  printf '%s\n' 'DATABASE_URL=file:./db/custom.db' > .env
+  print_ok "Created .env with a relative SQLite DATABASE_URL"
+elif ! grep -q '^DATABASE_URL=' .env; then
+  printf '%s\n' 'DATABASE_URL=file:./db/custom.db' >> .env
+  print_ok "Added relative SQLite DATABASE_URL to .env"
 fi
 bun run db:push
 print_ok "Database schema pushed (SQLite at db/custom.db)"
@@ -71,32 +75,22 @@ print_header "4/5  Checking AI provider configuration"
 
 AI_CONFIGURED=false
 
-# Check .z-ai-config (project root, home dir)
-for CONFIG_PATH in ".z-ai-config" "$HOME/.z-ai-config" "/etc/.z-ai-config"; do
-  if [ -f "$CONFIG_PATH" ]; then
-    if grep -q '"apiKey"' "$CONFIG_PATH" 2>/dev/null; then
-      print_ok "Z.AI config found at $CONFIG_PATH"
-      AI_CONFIGURED=true
-      break
-    fi
-  fi
-done
-
 # Check environment variables
-if [ "$AI_CONFIGURED" = false ]; then
-  if [ -n "$AI_API_KEY" ]; then
-    print_ok "AI_API_KEY environment variable is set (provider: ${AI_PROVIDER:-zai})"
-    AI_CONFIGURED=true
-  elif [ -n "$OPENAI_API_KEY" ]; then
-    print_ok "OPENAI_API_KEY environment variable is set"
-    AI_CONFIGURED=true
-  elif [ -n "$ANTHROPIC_API_KEY" ]; then
-    print_ok "ANTHROPIC_API_KEY environment variable is set"
-    AI_CONFIGURED=true
-  elif [ -n "$GOOGLE_API_KEY" ]; then
-    print_ok "GOOGLE_API_KEY environment variable is set"
-    AI_CONFIGURED=true
-  fi
+if [ -n "$AI_API_KEY" ]; then
+  print_ok "AI_API_KEY environment variable is set (provider: ${AI_PROVIDER:-custom})"
+  AI_CONFIGURED=true
+elif [ -n "$OPENAI_API_KEY" ]; then
+  print_ok "OPENAI_API_KEY environment variable is set"
+  AI_CONFIGURED=true
+elif [ -n "$ANTHROPIC_API_KEY" ]; then
+  print_ok "ANTHROPIC_API_KEY environment variable is set"
+  AI_CONFIGURED=true
+elif [ -n "$GOOGLE_API_KEY" ]; then
+  print_ok "GOOGLE_API_KEY environment variable is set"
+  AI_CONFIGURED=true
+elif [ "${AI_PROVIDER:-}" = "ollama" ] || curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+  print_ok "Ollama/local AI endpoint appears available"
+  AI_CONFIGURED=true
 fi
 
 if [ "$AI_CONFIGURED" = false ]; then
@@ -108,24 +102,18 @@ if [ "$AI_CONFIGURED" = false ]; then
   echo -e "    • AI IOC extraction"
   echo -e "    • AI dark-web query refinement"
   echo ""
-  echo -e "  ${BOLD}Option A: Z.AI (default, easiest)${NC}"
-  echo -e "    Get an API key from ${CYAN}https://z.ai${NC}, then:"
-  echo -e "    ${CYAN}cat > .z-ai-config << 'EOF'"
-  echo -e '    {"baseUrl":"https://api.z.ai/api/v1","apiKey":"YOUR_KEY"}'
-  echo -e "    EOF${NC}"
-  echo ""
-  echo -e "  ${BOLD}Option B: OpenAI / Anthropic / Google${NC}"
+  echo -e "  ${BOLD}Option A: OpenAI / Anthropic / Google${NC}"
   echo -e "    Set in .env or environment:"
   echo -e "    ${CYAN}AI_PROVIDER=openai${NC}  (or anthropic, google)"
   echo -e "    ${CYAN}AI_API_KEY=sk-...${NC}"
   echo -e "    ${CYAN}AI_MODEL=gpt-4o${NC}  (optional)"
   echo ""
-  echo -e "  ${BOLD}Option C: Ollama (free, local)${NC}"
+  echo -e "  ${BOLD}Option B: Ollama (free, local)${NC}"
   echo -e "    Install from ${CYAN}https://ollama.com/download${NC}, then:"
   echo -e "    ${CYAN}ollama pull llama3.2${NC}"
   echo -e "    ${CYAN}AI_PROVIDER=ollama AI_BASE_URL=http://localhost:11434/v1${NC}"
   echo ""
-  echo -e "  ${BOLD}Option D: Configure via the Settings UI${NC}"
+  echo -e "  ${BOLD}Option C: Configure via the Settings UI${NC}"
   echo -e "    Start the app (${CYAN}bun run dev${NC}), open the CTI Reports tab,"
   echo -e "    and use the AI Provider Settings panel."
   echo ""

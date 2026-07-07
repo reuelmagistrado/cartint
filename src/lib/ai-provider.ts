@@ -1,16 +1,17 @@
-// Unified AI provider — supports Z.AI, OpenAI, Anthropic, Google, and Ollama.
+// Unified AI provider — supports OpenAI, Anthropic, Google, Ollama, and
+// custom OpenAI-compatible endpoints.
 //
 // All AI calls in CARTINT (threat classifier, CTI report generator, IOC
 // extractor, dark-web filter) go through this module instead of calling
-// z-ai-web-dev-sdk directly. This lets users choose their preferred AI
-// provider from the Settings panel without changing code.
+// provider-specific SDKs. This lets users choose their preferred AI provider
+// from the Settings panel without changing code or installing vendor SDKs.
 //
 // Provider config is stored in memory (loaded from .env / environment vars
 // at startup, overridable at runtime via /api/ai-settings). On a fresh
-// clone with no config, it falls back to the default Z.AI SDK which reads
-// .z-ai-config from the project/home dir.
+// clone with no config, AI calls throw quickly and callers fall back to
+// heuristic/template modes.
 
-export type AIProvider = "zai" | "openai" | "anthropic" | "google" | "ollama" | "custom";
+export type AIProvider = "openai" | "anthropic" | "google" | "ollama" | "custom";
 
 export type AISettings = {
   provider: AIProvider;
@@ -19,19 +20,24 @@ export type AISettings = {
   model: string; // e.g. "gpt-4o", "claude-sonnet-4-20250514", "gemini-2.0-flash", "llama3.2"
 };
 
+const SUPPORTED_PROVIDERS = ["openai", "anthropic", "google", "ollama", "custom"] as const;
+
+function normalizeProvider(provider: string | undefined): AIProvider {
+  return SUPPORTED_PROVIDERS.includes(provider as AIProvider) ? (provider as AIProvider) : "custom";
+}
+
 // Default settings — derived from environment variables at startup.
 // This way users can configure via .env OR via the Settings UI at runtime.
 const DEFAULT_SETTINGS: AISettings = {
-  provider: (process.env.AI_PROVIDER as AIProvider) || "zai",
+  provider: normalizeProvider(process.env.AI_PROVIDER),
   apiKey: process.env.AI_API_KEY || "",
   baseUrl: process.env.AI_BASE_URL || "",
   model: process.env.AI_MODEL || "",
 };
 
 // In-memory settings (overridable at runtime via /api/ai-settings).
-// On a fresh clone with no env vars and no .z-ai-config, this stays as
-// provider="zai" with empty key — the Z.AI SDK will throw on call, and
-// callers fall back to heuristic/template modes.
+// On a fresh clone with no env vars this remains unconfigured; callers fall
+// back to heuristic/template modes.
 let settings: AISettings = { ...DEFAULT_SETTINGS };
 
 // In-memory runtime override (set via /api/ai-settings POST).
@@ -52,12 +58,7 @@ export function setAISettings(s: AISettings): void {
 
 export function isAIConfigured(): boolean {
   const s = getAISettings();
-  if (s.provider === "zai") {
-    // Z.AI uses .z-ai-config file — assume configured (the SDK will throw
-    // if the file is missing, and callers handle that).
-    return true;
-  }
-  // Other providers need an API key (or for Ollama, just a baseUrl)
+  // Providers need an API key (or for Ollama, just a baseUrl)
   if (s.provider === "ollama") {
     return !!s.baseUrl;
   }
@@ -70,13 +71,6 @@ export function isAIConfigured(): boolean {
 
 // Provider-specific defaults
 export const PROVIDER_DEFAULTS: Record<AIProvider, { baseUrl: string; model: string; label: string; needsKey: boolean; helpUrl: string }> = {
-  zai: {
-    baseUrl: "",
-    model: "",
-    label: "Z.AI (default)",
-    needsKey: true,
-    helpUrl: "https://z.ai",
-  },
   openai: {
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4o",
@@ -136,16 +130,6 @@ export type ChatCompletionResult = {
 // Cached clients
 let cachedClient: { settings: AISettings; call: (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> } | null = null;
 
-// Z.AI SDK is loaded lazily so it's only imported when actually used
-// (avoids requiring the package for users who only use OpenAI/etc.)
-let zaiSdkPromise: Promise<unknown> | null = null;
-async function getZaiSdk() {
-  if (!zaiSdkPromise) {
-    zaiSdkPromise = import("z-ai-web-dev-sdk").then((m) => m.default);
-  }
-  return zaiSdkPromise;
-}
-
 // Get the active AI client (creates/refreshes on settings change)
 async function getClient() {
   const s = getAISettings();
@@ -159,8 +143,6 @@ async function getClient() {
 // Create a caller function for the configured provider
 function createCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> {
   switch (s.provider) {
-    case "zai":
-      return createZaiCaller(s);
     case "openai":
     case "anthropic":
     case "google":
@@ -168,34 +150,8 @@ function createCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<C
     case "custom":
       return createOpenAiCompatibleCaller(s);
     default:
-      return createZaiCaller(s);
+      return createOpenAiCompatibleCaller(s);
   }
-}
-
-// Z.AI caller — uses the z-ai-web-dev-sdk (reads .z-ai-config)
-function createZaiCaller(_s: AISettings): (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> {
-  return async (opts: ChatCompletionOptions) => {
-    const ZAI = (await getZaiSdk()) as { create: () => Promise<unknown> };
-    const zai = await ZAI.create();
-    const result = await (zai as {
-      chat: {
-        completions: {
-          create: (body: Record<string, unknown>) => Promise<unknown>;
-        };
-      };
-    }).chat.completions.create({
-      messages: opts.messages,
-      stream: opts.stream ?? false,
-      thinking: opts.thinking ?? { type: "disabled" },
-      ...(opts.max_tokens ? { max_tokens: opts.max_tokens } : {}),
-    });
-
-    if (result instanceof ReadableStream) {
-      return { content: "", stream: result };
-    }
-    const json = result as { choices?: { message?: { content?: string } }[] };
-    return { content: json.choices?.[0]?.message?.content ?? "" };
-  };
 }
 
 // OpenAI-compatible caller — works for OpenAI, Anthropic (via openai compat),
@@ -204,6 +160,12 @@ function createZaiCaller(_s: AISettings): (opts: ChatCompletionOptions) => Promi
 function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> {
   const baseUrl = s.baseUrl || PROVIDER_DEFAULTS[s.provider].baseUrl;
   const model = s.model || PROVIDER_DEFAULTS[s.provider].model;
+
+  if (!baseUrl || !model) {
+    return async () => {
+      throw new Error("AI provider is not configured. Set AI_PROVIDER, AI_BASE_URL, AI_MODEL, and AI_API_KEY, or use Ollama/local fallback settings.");
+    };
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };

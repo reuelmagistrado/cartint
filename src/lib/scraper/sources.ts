@@ -59,9 +59,8 @@ async function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = 15000)
 }
 
 async function readPage(url: string): Promise<string> {
- // Use standard fetch to read web pages — this works with any AI provider
- // (the old z-ai page_reader was Z.AI-specific and wouldn't work with
- // OpenAI/Anthropic/Gemini/Ollama).
+  // Use standard fetch to read web pages — this works with any AI provider
+  // and avoids provider-specific page-reader SDKs.
  try {
  const res = await fetchWithTimeout(url, {
  headers: {
