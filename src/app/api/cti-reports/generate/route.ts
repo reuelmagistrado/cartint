@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateCtiReport, type ReportConfig } from "@/lib/cti-report-generator";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300; // 5 minutes — LLM report generation can take a while
 
 // POST /api/cti-reports/generate — generate a structured CTI report.
 export async function POST(req: NextRequest) {

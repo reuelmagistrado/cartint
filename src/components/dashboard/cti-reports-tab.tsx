@@ -119,6 +119,15 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       });
+      // Handle non-JSON responses (server timeout returns HTML error page)
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(
+          res.status === 504 || res.status === 502
+            ? "Report generation timed out — the LLM is generating a complex report. Please try again in a moment."
+            : `Server returned ${res.status}. The report may be too large or the LLM is busy. Try fewer sections or a shorter time range.`
+        );
+      }
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || "Generation failed");
 
