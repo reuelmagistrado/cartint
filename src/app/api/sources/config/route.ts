@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/sources/config — source config (enabled + scrapeIntervalMin).
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
   const sources = await db.source.findMany({
     orderBy: [{ isDarkWeb: "desc" }, { name: "asc" }],
     select: { id: true, name: true, enabled: true, scrapeIntervalMin: true, isDarkWeb: true },
@@ -21,7 +19,6 @@ export async function GET() {
 // Only enabled + scrapeIntervalMin are editable.
 export async function POST(req: NextRequest) {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
   try {
     const body = await req.json().catch(() => ({}));
     const updates = Array.isArray(body?.sources) ? body.sources : [];

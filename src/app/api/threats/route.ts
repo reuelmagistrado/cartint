@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { RELEVANCE_THRESHOLD, ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/threats — list automotive threats with filters.
 export async function GET(req: NextRequest) {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const sp = req.nextUrl.searchParams;
   const limit = Math.min(Number(sp.get("limit") ?? 100), 500);

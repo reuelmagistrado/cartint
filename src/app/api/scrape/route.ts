@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSourcesSeeded, scrapeAll, scrapeSource, notifyThreatStream } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes — darkweb scrape + AI classification can take a while
@@ -9,7 +8,6 @@ export const maxDuration = 300; // 5 minutes — darkweb scrape + AI classificat
 // Body: { source?: string }  — if source is provided, scrape only that source.
 export async function POST(req: NextRequest) {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
   try {
     const body = await req.json().catch(() => ({}));
     const source = typeof body?.source === "string" ? body.source : undefined;

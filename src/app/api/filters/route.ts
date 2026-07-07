@@ -2,14 +2,12 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ATM_TACTICS } from "@/lib/atm";
 import { RELEVANCE_THRESHOLD, ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/filters — distinct values for dashboard filter dropdowns.
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const accepted = { isAutomotive: true, relevanceScore: { gte: RELEVANCE_THRESHOLD } };
 

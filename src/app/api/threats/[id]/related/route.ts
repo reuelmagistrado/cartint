@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +12,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const { id } = await params;
   const threat = await db.threat.findUnique({ where: { id } });

@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/sources — source status overview.
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const sources = await db.source.findMany({
     orderBy: [{ isDarkWeb: "desc" }, { name: "asc" }],

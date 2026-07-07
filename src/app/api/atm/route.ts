@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ATM_TACTICS } from "@/lib/atm";
 import { RELEVANCE_THRESHOLD, ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +9,6 @@ export const dynamic = "force-dynamic";
 // Returns counts of accepted threats per tactic (and per technique).
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const accepted = { isAutomotive: true, relevanceScore: { gte: RELEVANCE_THRESHOLD } };
 

@@ -28,7 +28,7 @@ bun run dev
 # 4. Open http://localhost:3000
 ```
 
-The dashboard auto-seeds with 47+ sample automotive threats on first run, so you can explore the UI immediately.
+The dashboard starts empty — click **"Scrape All"** in the Intelligence Sources panel to fetch live automotive threats from all sources. Each scrape fetches real data from public APIs (RansomLook, BleepingComputer, The Hacker News, NVD CVEs), classifies it with AI, and populates the dashboard.
 
 ### Production mode (no dev overlay, faster, recommended for daily use)
 

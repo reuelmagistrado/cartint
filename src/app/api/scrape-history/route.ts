@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +10,6 @@ export const dynamic = "force-dynamic";
 // used by the ScrapeHistoryChart.
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const logs = await db.scrapeLog.findMany({
     orderBy: { startedAt: "asc" },

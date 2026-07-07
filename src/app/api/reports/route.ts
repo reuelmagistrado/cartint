@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { chatCompletionText } from "@/lib/ai-provider";
 import { db } from "@/lib/db";
 import { RELEVANCE_THRESHOLD, ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 import { isContentFilterError } from "@/lib/scraper/heuristic";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +9,6 @@ export const dynamic = "force-dynamic";
 // GET /api/reports — list saved CTI reports.
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
   const reports = await db.report.findMany({ orderBy: { generatedAt: "desc" } });
   return NextResponse.json({ reports });
 }
@@ -136,7 +134,6 @@ function buildTemplateReport(
 // Body: { title?, period? }  — period e.g. "2025-01" or "last-30-days"
 export async function POST(req: NextRequest) {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
   try {
     const body = await req.json().catch(() => ({}));
     const period = String(body?.period ?? "last-30-days");

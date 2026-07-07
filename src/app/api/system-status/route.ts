@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +59,6 @@ function tryStartService(port: number): boolean {
 // (the service needs a few seconds to come up); the next poll will show "ok".
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const now = new Date().toISOString();
 

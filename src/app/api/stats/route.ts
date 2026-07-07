@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { RELEVANCE_THRESHOLD, ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +8,6 @@ export const dynamic = "force-dynamic";
 // Query: ?trendDays=7|14|30 (default 14) — controls the threats-over-time window.
 export async function GET(req: NextRequest) {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
 
   const trendDays = Math.min(Math.max(Number(req.nextUrl.searchParams.get("trendDays") ?? 14) || 14, 1), 90);
 

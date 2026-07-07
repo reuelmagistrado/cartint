@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
-import { seedIfEmpty } from "@/lib/scraper/seed";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/scrapelogs — recent scrape run history (for the false-positive audit panel).
 export async function GET() {
   await ensureSourcesSeeded();
-  await seedIfEmpty();
   const logs = await db.scrapeLog.findMany({
     orderBy: { startedAt: "desc" },
     take: 100,
