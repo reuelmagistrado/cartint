@@ -835,3 +835,53 @@ Stage Summary:
 - CTI reports now have two major fixes:
   1. **Time-range accuracy:** Every report shows BOTH the selected window AND the actual date range of matched threats (oldest→newest + date spread), so the analyst can immediately verify accuracy. Threat tables show ALL matched threats (not capped at 30) with the total count in the heading.
   2. **Genuine per-type distinction:** Each of the 6 report types (Weekly Digest, Threat Actor Profile, Incident Report, Campaign Analysis, Sector Assessment, Ad-Hoc) now produces a COMPLETELY DIFFERENT document with type-specific sections, analysis structure, and focus. The old monolithic `buildTemplateReport` was replaced with a dispatcher + 6 type-specific builders + shared helpers. Auto-select logic now correctly picks the most active actor / most-targeted sector / most recent incident when "all" is selected, instead of returning empty or all threats. Verified via curl (4 types side-by-side, each with distinct sections and correct threat counts) and agent-browser (Weekly Digest vs Threat Actor Profile — visually different sections, different titles, different threat counts).
+
+---
+Task ID: 36 (streaming LLM reports — no template fallback, no threat cap)
+Agent: main (Z.ai Code)
+Task: (1) Don't use the template fallback — make the LLM actually produce results. (2) Don't cap threats at 25 — analyze all actual threat data depending on the time range.
+
+Work Log:
+- **Root cause analysis:** The previous approach used a server-side `Promise.race` with a 12s timeout + template fallback. This was necessary because the cloud sandbox gateway has a ~30s timeout — if the server didn't respond within that window, the gateway returned a 502. But this meant the LLM (which takes 57-68s for a complex report) never actually produced results; the user always got the template. The 25-threat cap was added to try to make the prompt smaller so the LLM would finish faster, but it wasn't enough.
+
+- **Solution: Server-Sent streaming.** Instead of waiting for the full LLM response and then sending JSON, the API now **streams the LLM output token-by-token** to the client. Streaming keeps the gateway connection alive (data flows continuously every few hundred ms), so the LLM can take as long as it needs — 60, 90, even 120+ seconds — without triggering a gateway timeout. The gateway sees continuous data flow and never gives up.
+
+- **Implementation details:**
+
+  1. `src/lib/cti-report-generator.ts`:
+     - Exported `REPORT_TYPE_META`, `gatherThreats`, `buildReportPrompt`, `buildTemplateReport` so the API route can compose them directly.
+     - **Removed the 25-threat cap** (`MAX_LLM_THREATS = 25` deleted). All threats matching the selected time range are now sent to the LLM. Each threat is still trimmed per-field (title 120 chars, desc 200 chars, dataTypes 80 chars) to keep the prompt manageable (~500 bytes/threat → ~25KB for 50 threats, well within LLM context limits).
+     - Updated the prompt text to tell the LLM: "All N threats matching the selected time range are included below."
+
+  2. `src/app/api/cti-reports/generate/route.ts` — completely rewritten for streaming:
+     - Uses `zai.chat.completions.create({ ..., stream: true })` — the SDK returns a `ReadableStream` when `stream: true` and the response is `text/event-stream`.
+     - Creates a `ReadableStream` that:
+       1. Sends the report metadata as JSON on line 1 (id, title, type, method, threatIds, etc.)
+       2. Parses the LLM's SSE stream (`data: {"choices":[{"delta":{"content":"..."}}]}` lines)
+       3. Enqueues each content delta directly to the client
+       4. Closes when the LLM stream ends (`[DONE]`)
+     - The template fallback is used ONLY for content-filter errors (error code 1301) — NOT for timeouts. Timeouts no longer happen because streaming keeps the connection alive.
+     - Returns `new Response(stream, { "Content-Type": "text/plain" })` — Next.js streams this to the client.
+     - `maxDuration = 300` (5 min) as a safety net.
+
+  3. `src/components/dashboard/cti-reports-tab.tsx` — updated `generate()` to read the stream:
+     - `fetch()` with no client timeout (streaming keeps the connection alive indefinitely).
+     - Gets `res.body.getReader()`, reads chunks via `decoder.decode(value, { stream: true })`.
+     - First line (up to `\n`) = JSON metadata → parsed into the report object.
+     - Remaining data = streamed Markdown content → accumulated into `content`.
+     - **Progressive rendering:** updates `setReport({...reportObj, content})` every 500ms so the user sees the report being written in real-time in the modal. The modal opens as soon as the first chunk arrives (within 3-5s), and content grows as tokens stream in.
+     - Added a `streamProgress` state + streaming indicator next to the Generate button (shows the first 100 chars of partial content, button label changes from "Starting…" → "Streaming…").
+     - No template fallback on the client — the method badge shows "LLM" (or "Template" only if the server fell back due to content-filter).
+
+- **Verification (curl direct :3000):** `POST /api/cti-reports/generate` → `HTTP 200` in `57.5s`, `method: llm`, `47 threats`, `14,257 chars`. The LLM produced a genuine report with natural-language analysis ("91.5% were classified as high severity, indicating a persistent and aggressive threat landscape"), all 13 sections, and calculated statistics from all 47 threats.
+
+- **Verification (curl through Caddy :81):** `HTTP 200` in `61.8s`, `method: llm`, `47 threats`, `14,928 chars`. Streaming works through the gateway — the 62s response completed without a 502.
+
+- **Verification (agent-browser via :81):** Clicked Generate Report → after 30s the modal was already open with the "LLM" badge and "1. Threat Overview" section rendering (progressive streaming visible). After 70s the full report was complete with all 13 sections (1. Threat Overview through 13. Glossary). The LLM-generated content included real analysis: "This weekly digest covers 47 threats... 43 are ransomware attacks... with a notable concentration on logistics, fleet management, and dealership operations." No "Template" badge, no timeout error.
+
+- **Dev log:** `POST /api/cti-reports/generate 200 in 68s` — the LLM took 68 seconds and the streaming connection stayed alive the entire time. No 502, no timeout, no template fallback.
+
+- `bun run lint` clean; `tsc --noEmit` clean; no runtime errors.
+
+Stage Summary:
+- CTI reports are now **100% LLM-generated** via streaming — no template fallback for timeouts (template is used ONLY for content-filter errors, which are rare). All threats matching the selected time range are sent to the LLM (no 25-threat cap), so the analysis is accurate and reflects the actual threat data. The streaming approach keeps the gateway connection alive for as long as the LLM needs (57-68s typical), eliminating the 502 timeout that previously forced the template fallback. The user sees the report being written in real-time (progressive rendering in the modal) with the "LLM" badge confirming genuine LLM output. Verified end-to-end: curl (direct + gateway) + agent-browser all show `method: llm`, 47 threats, full 13-section reports with natural-language analysis.

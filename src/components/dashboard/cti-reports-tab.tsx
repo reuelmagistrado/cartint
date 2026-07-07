@@ -69,6 +69,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
   const { toast } = useToast();
   const [generating, setGenerating] = useState(false);
   const [report, setReport] = useState<GeneratedReport | null>(null);
+  const [streamProgress, setStreamProgress] = useState("");
 
   // Form state
   const [reportType, setReportType] = useState<ReportType>("weekly-digest");
@@ -100,7 +101,9 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
 
   const generate = async () => {
     setGenerating(true);
-    toast({ title: "Generating CTI Report…", description: "Composing a structured report — completes in ~15s (template fallback ensures you always get output)." });
+    setReport(null);
+    setStreamProgress("");
+    toast({ title: "Generating CTI Report…", description: "The LLM is analyzing all threats in the selected time range. Streaming the report as it's written — this can take 30-90s." });
     try {
       const config: Record<string, unknown> = {
         type: reportType,
@@ -120,37 +123,90 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
       }
       if (reportType === "ad-hoc" && selectedThreatIds.length > 0) config.threatIds = selectedThreatIds;
 
+      // Stream the response — the server sends metadata (JSON) on line 1,
+      // then the LLM-generated Markdown content token-by-token.
+      // No client timeout: streaming keeps the connection alive indefinitely.
       const res = await fetch("/api/cti-reports/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
-        // 30s client timeout — the server-side LLM call is capped at 12s and
-        // falls back to the template report, so the server always responds
-        // within ~13s. 30s gives ample margin for network/gateway latency.
-        signal: AbortSignal.timeout(30000),
       });
-      // Handle non-JSON responses (gateway/proxy timeout returns HTML error page)
-      const contentType = res.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) {
-        throw new Error(
-          `Server returned ${res.status} (non-JSON). The gateway may have timed out — please try again.`
-        );
-      }
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error || "Generation failed");
 
-      setReport(json.report);
-      const methodNote = json.report.method === "template" ? " (template fallback — LLM busy)" : "";
-      toast({ title: "CTI Report generated", description: json.report.title + methodNote });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `Server returned ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let metaParsed = false;
+      let reportObj: GeneratedReport | null = null;
+      let content = "";
+      let lastUpdate = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // First line is JSON metadata (up to first \n)
+        if (!metaParsed) {
+          const newlineIdx = buffer.indexOf("\n");
+          if (newlineIdx >= 0) {
+            const metaLine = buffer.slice(0, newlineIdx);
+            buffer = buffer.slice(newlineIdx + 1);
+            try {
+              reportObj = JSON.parse(metaLine) as GeneratedReport;
+              metaParsed = true;
+            } catch {
+              throw new Error("Failed to parse report metadata from stream");
+            }
+          }
+        }
+
+        // Accumulate content and show progressive updates (throttled to 500ms)
+        if (metaParsed && buffer) {
+          content += buffer;
+          buffer = "";
+          const now = Date.now();
+          if (now - lastUpdate > 500 && reportObj) {
+            lastUpdate = now;
+            // Progressive render — update the report with partial content
+            setReport({ ...reportObj, content });
+            setStreamProgress(content);
+          }
+        }
+      }
+
+      // Process any remaining buffer
+      if (metaParsed && buffer) {
+        content += buffer;
+      }
+
+      // Final update with complete content
+      if (reportObj) {
+        reportObj.content = content;
+        setReport({ ...reportObj });
+        setStreamProgress("");
+        const methodNote = reportObj.method === "template" ? " (template fallback — content filtered)" : "";
+        toast({ title: "CTI Report generated", description: reportObj.title + methodNote });
+      } else {
+        throw new Error("No report data received from stream");
+      }
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("abort") || msg.includes("timeout") || msg.includes("Timeout")) {
-        toast({ title: "Report generation timed out", description: "The request took too long. The server should auto-fall back to a template — please try again.", variant: "destructive" });
+        toast({ title: "Report generation timed out", description: "The streaming connection was interrupted. Please try again.", variant: "destructive" });
       } else {
         toast({ title: "Report generation failed", description: msg, variant: "destructive" });
       }
     } finally {
       setGenerating(false);
+      setStreamProgress("");
     }
   };
 
@@ -441,15 +497,22 @@ ${renderMarkdownToHtml(report.content)}
 
               {/* Actions */}
               <div className="mt-5 flex justify-end gap-2">
-                <Button
-                  size="sm"
-                  onClick={generate}
-                  disabled={generating}
-                  className="border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
-                >
-                  {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                  {generating ? "Generating…" : "Generate Report"}
-                </Button>
+                <div className="flex items-center gap-3">
+                  {generating && streamProgress && (
+                    <span className="text-[10px] text-emerald-400/70">
+                      {streamProgress.length > 100 ? `${streamProgress.slice(0, 100)}…` : streamProgress.replace(/[#*|]/g, "").trim() || "streaming…"}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={generate}
+                    disabled={generating}
+                    className="border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                  >
+                    {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                    {generating ? (streamProgress ? "Streaming…" : "Starting…") : "Generate Report"}
+                  </Button>
+                </div>
               </div>
             </Card>
       </motion.div>

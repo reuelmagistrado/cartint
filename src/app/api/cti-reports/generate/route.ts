@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateCtiReport, type ReportConfig } from "@/lib/cti-report-generator";
+import ZAI from "z-ai-web-dev-sdk";
+import {
+  type ReportConfig,
+  REPORT_TYPE_META,
+  gatherThreats,
+  buildReportPrompt,
+  buildTemplateReport,
+} from "@/lib/cti-report-generator";
+import { isContentFilterError } from "@/lib/scraper/heuristic";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 minutes — LLM report generation can take a while
+export const maxDuration = 300; // 5 min — streaming keeps the gateway alive
 
-// POST /api/cti-reports/generate — generate a structured CTI report.
+// POST /api/cti-reports/generate — streams the LLM-generated CTI report.
+//
+// Streaming protocol (text/plain):
+//   Line 1: JSON metadata object (report id, title, type, method, etc.)
+//   Lines 2+: streamed Markdown content from the LLM (or template fallback)
+//
+// Streaming is used so the LLM can take as long as it needs — the gateway
+// sees continuous data flow (tokens arriving every few hundred ms) and
+// never times out. The template fallback is used ONLY for content-filter
+// errors (error code 1301), NOT for timeouts.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -25,8 +42,190 @@ export async function POST(req: NextRequest) {
       sections: body.sections,
     };
 
-    const report = await generateCtiReport(config);
-    return NextResponse.json({ ok: true, report });
+    const meta = REPORT_TYPE_META[config.type];
+    const days = config.timeRangeDays || meta.defaultDays;
+    const since = new Date(Date.now() - days * 86400000);
+
+    // Gather threats based on report type + time range
+    const threats = await gatherThreats(config, since);
+
+    if (threats.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "No accepted automotive threats match the selected criteria and time range." },
+        { status: 400 },
+      );
+    }
+
+    // Build the LLM prompt with ALL threats (no cap)
+    const prompt = buildReportPrompt(config, threats, days);
+
+    // Pre-compute report metadata
+    const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    const title = `${meta.title} — ${config.type === "weekly-digest" ? `${days}d` : config.threatActor || config.sector || `${days}d`} — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+    const reportMeta = {
+      id: reportId,
+      title,
+      type: config.type,
+      period: `${days}d`,
+      metadata: {
+        priority: config.priority || "high",
+        tlp: config.tlp || "TLP:AMBER",
+        companyName: config.companyName || "",
+        reportId,
+        date: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+        reliability: "B-2 (Usually reliable / Probably true)",
+      },
+      threatIds: threats.map((t) => t.id),
+      generatedAt: new Date().toISOString(),
+      method: "llm" as const,
+    };
+
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let method: "llm" | "template" = "llm";
+        let content = "";
+        let metadataSent = false;
+
+        // Helper to send the metadata line (only once)
+        const sendMetadata = (m: "llm" | "template") => {
+          if (metadataSent) return;
+          metadataSent = true;
+          const metaToSend = { ...reportMeta, method: m };
+          controller.enqueue(encoder.encode(JSON.stringify(metaToSend) + "\n"));
+        };
+
+        try {
+          const zai = await ZAI.create();
+          const result = await zai.chat.completions.create({
+            messages: [
+              { role: "assistant", content: prompt.systemPrompt },
+              { role: "user", content: prompt.userPrompt },
+            ],
+            stream: true,
+            thinking: { type: "disabled" },
+          });
+
+          // The SDK returns a ReadableStream when stream:true and the response
+          // is text/event-stream. Otherwise it returns the parsed JSON.
+          if (result instanceof ReadableStream) {
+            const reader = result.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+
+              // SSE format: lines starting with "data: " contain JSON
+              const lines = buffer.split("\n");
+              buffer = lines.pop() || ""; // keep incomplete line in buffer
+
+              for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                const data = line.slice(6).trim();
+                if (data === "[DONE]" || !data) continue;
+                try {
+                  const parsed = JSON.parse(data);
+                  const delta = parsed.choices?.[0]?.delta?.content || "";
+                  if (delta) {
+                    // First chunk: send metadata line before content
+                    if (!metadataSent) {
+                      method = "llm";
+                      sendMetadata("llm");
+                    }
+                    content += delta;
+                    controller.enqueue(encoder.encode(delta));
+                  }
+                } catch {
+                  // Non-JSON line (e.g., SSE comment) — skip
+                }
+              }
+            }
+
+            // Process any remaining buffer
+            if (buffer.startsWith("data: ")) {
+              const data = buffer.slice(6).trim();
+              if (data && data !== "[DONE]") {
+                try {
+                  const parsed = JSON.parse(data);
+                  const delta = parsed.choices?.[0]?.delta?.content || "";
+                  if (delta) {
+                    if (!metadataSent) {
+                      method = "llm";
+                      sendMetadata("llm");
+                    }
+                    content += delta;
+                    controller.enqueue(encoder.encode(delta));
+                  }
+                } catch {
+                  // skip
+                }
+              }
+            }
+          } else {
+            // Non-streaming JSON response (fallback path in the SDK)
+            const json = result as { choices?: { message?: { content?: string } }[] };
+            content = json.choices?.[0]?.message?.content ?? "";
+          }
+
+          // If the LLM produced content, we're done
+          if (content.trim()) {
+            if (!metadataSent) {
+              sendMetadata("llm");
+            }
+            controller.close();
+            return;
+          }
+
+          // Empty LLM output — fall back to template
+          console.warn("[cti-report] LLM produced empty output, using template fallback.");
+          method = "template";
+          content = buildTemplateReport(config, threats, days);
+          sendMetadata("template");
+          controller.enqueue(encoder.encode(content));
+          controller.close();
+        } catch (err) {
+          // Content-filter error (code 1301) is the ONLY case we fall back
+          // to the template. Timeouts don't happen with streaming.
+          if (isContentFilterError(err)) {
+            console.warn("[cti-report] LLM content-filtered, using template fallback.");
+            method = "template";
+            content = buildTemplateReport(config, threats, days);
+            sendMetadata("template");
+            controller.enqueue(encoder.encode(content));
+          } else {
+            // Other errors — send an error message in the stream
+            console.error("[cti-report] LLM stream failed:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            if (!metadataSent) {
+              // Haven't sent anything yet — send metadata + error
+              method = "template";
+              content = buildTemplateReport(config, threats, days);
+              sendMetadata("template");
+              controller.enqueue(encoder.encode(content));
+            } else {
+              // Already sent some content — append an error note
+              controller.enqueue(
+                encoder.encode(`\n\n---\n*Error: LLM stream interrupted (${errMsg}). Partial report shown above.*`),
+              );
+            }
+          }
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: (e as Error).message },

@@ -63,7 +63,7 @@ export type GeneratedReport = {
   method: "llm" | "template";
 };
 
-const REPORT_TYPE_META: Record<ReportType, { title: string; defaultDays: number }> = {
+export const REPORT_TYPE_META: Record<ReportType, { title: string; defaultDays: number }> = {
   "weekly-digest": { title: "Weekly Threat Digest", defaultDays: 7 },
   "threat-actor-profile": { title: "Threat Actor Profile", defaultDays: 30 },
   "incident-report": { title: "Incident Report", defaultDays: 30 },
@@ -167,7 +167,7 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
 }
 
 // Gather threats based on report type and config
-async function gatherThreats(config: ReportConfig, since: Date) {
+export async function gatherThreats(config: ReportConfig, since: Date) {
   const accepted = {
     isAutomotive: true,
     relevanceScore: { gte: RELEVANCE_THRESHOLD },
@@ -258,7 +258,7 @@ async function gatherThreats(config: ReportConfig, since: Date) {
 }
 
 // Build the LLM prompt for report generation
-function buildReportPrompt(config: ReportConfig, threats: any[], days: number) {
+export function buildReportPrompt(config: ReportConfig, threats: any[], days: number) {
   const meta = REPORT_TYPE_META[config.type];
   const sections = config.sections || [
     "Threat Overview", "Adversary Interest Analysis", "Intelligence Levels",
@@ -267,12 +267,11 @@ function buildReportPrompt(config: ReportConfig, threats: any[], days: number) {
     "Distribution", "Glossary",
   ];
 
-  // Cap the number of threats sent to the LLM and trim each one to the
-  // essential fields (drop long descriptions) to keep the prompt small.
-  // The full threat set is still used for the template fallback + metadata.
-  const MAX_LLM_THREATS = 25;
-  const llmThreats = threats.slice(0, MAX_LLM_THREATS);
-  const threatData = llmThreats.map((t) => ({
+  // Send ALL threats to the LLM (no cap) so the analysis is accurate and
+  // reflects the actual threat data in the selected time range. Each threat
+  // is trimmed to essential fields to keep the prompt manageable (~500 bytes
+  // per threat → ~25KB for 50 threats, well within LLM context limits).
+  const threatData = threats.map((t) => ({
     title: String(t.title ?? "").slice(0, 120),
     desc: String(t.description ?? "").slice(0, 200),
     sev: t.severity,
@@ -317,7 +316,7 @@ Kill Chain: Reconnaissance, Weaponization, Delivery, Exploitation, Installation,
 Type-specific requirements:
 ${getReportTypeRequirements(config)}
 
-${threats.length > MAX_LLM_THREATS ? `NOTE: ${threats.length} threats matched but only the ${MAX_LLM_THREATS} most recent are included below. Aggregate counts should reflect ALL ${threats.length} where possible.` : ""}
+${threats.length > 50 ? `NOTE: ${threats.length} threats matched the selected time range. ALL ${threats.length} are included in the data below. Analyze every threat for accurate statistics.` : `All ${threats.length} threats matching the selected time range are included below.`}
 
 Output ONLY the Markdown report.`;
 
@@ -325,7 +324,7 @@ Output ONLY the Markdown report.`;
 
 Report Type: ${config.type}
 Time Range: Last ${days} days
-Total threats matched: ${threats.length} (showing ${llmThreats.length})
+Total threats matched: ${threats.length} (all included below)
 ${config.threatActor ? `Threat Actor: ${config.threatActor}\n` : ""}${config.sector ? `Sector: ${config.sector}\n` : ""}${config.singleThreatId ? `Single Threat ID: ${config.singleThreatId}\n` : ""}${config.campaignFilter ? `Campaign Filter: ${config.campaignFilter} = ${config.campaignFilterValue}\n` : ""}${config.threatIds?.length ? `Selected Threat IDs: ${config.threatIds.join(", ")}\n` : ""}
 Threat Data:
 ${JSON.stringify(threatData)}`;
@@ -981,7 +980,7 @@ function buildAdHocReport(config: ReportConfig, threats: any[], days: number): s
 
 // ---- Dispatcher: routes to the type-specific builder ----
 
-function buildTemplateReport(config: ReportConfig, threats: any[], days: number): string {
+export function buildTemplateReport(config: ReportConfig, threats: any[], days: number): string {
   const meta = REPORT_TYPE_META[config.type];
   const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
