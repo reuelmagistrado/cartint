@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   keywords: ["CARTINT", "automotive threat intelligence", "dark web", "OSINT", "Auto-ISAC", "ATM", "connected vehicle", "CTI"],
   authors: [{ name: "CARTINT" }],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "/logo.svg",
   },
   openGraph: {
     title: "CARTINT — Automotive Threat Intelligence",
