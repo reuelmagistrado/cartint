@@ -788,3 +788,50 @@ Work Log:
 
 Stage Summary:
 - The generated CTI report now opens in a modal Dialog (z-50) that overlays the sticky footer (z-10) instead of competing with it inline. The footer no longer blocks the report. The form stays visible underneath, so the analyst can close the modal and immediately tweak settings + regenerate. The modal is bounded to 90vh with an internal scrollbar (flex column + min-h-0 flex-1 overflow-y-auto), so the full report — including the bottom sections (Recommendations, Distribution, TLP Classification, Key Terminology) — is reachable by scrolling. Export buttons (PDF/.md/.json) live in the modal header. Verified end-to-end via agent-browser: generate → modal opens above footer → scroll to bottom → close → form still visible.
+
+---
+Task ID: 35 (accuracy + distinction: CTI report time-range + per-type content)
+Agent: main (Z.ai Code)
+Task: (1) Fix "Threats Included in the generated report doesn't match the time range selected by user." (2) Make each of the 6 report types produce genuinely distinct content — not one template for all.
+
+Work Log:
+- **Issue 1 — Time-range accuracy:** The report said "Last N days" but didn't show the ACTUAL date range of the matched threats. The seed data clusters 47 of 48 threats on just 2 days (Jul 5-6), so a 7-day report and a 30-day report looked nearly identical (47 vs 48 threats), making it FEEL like the time range wasn't respected — even though the DB query (`attackDate: { gte: since }`) was technically correct. Also, the "Threats Included" table was capped at 30 rows with no indication there were more.
+  * Fix: Added a `buildTimeRangeBlock()` helper that shows BOTH "Selected Window" (what the user picked) AND "Actual Threat Date Range" (oldest→newest attackDate among matched threats) AND "Date Spread" (how many days the threats actually span). Now the user can immediately verify that 47 threats in "Last 7 days" span Jul 3→Jul 6 (4-day spread) — accurate and transparent.
+  * Fix: The Weekly Digest, Campaign Analysis, and Sector Assessment threat tables now show ALL matched threats (not capped at 30), with the count in the heading: "### All Threats This Period (47)".
+
+- **Issue 2 — Report-type distinction (the core problem):** `buildTemplateReport` was ONE monolithic function that generated the IDENTICAL structure for ALL 6 report types — only the title changed. All 6 types had the same 13 sections in the same order. This is what the user meant by "one template is only generated for all the report types."
+  * Fix: Completely rewrote `buildTemplateReport` as a **dispatcher** that routes to 6 **type-specific builders**, each producing a GENUINELY DISTINCT document with different sections, different focus, and different analysis structure:
+    1. **Weekly Digest** — broad summary: Executive Summary → Threat Overview → Source Health Summary → Threat Actors Active This Period → Trending ATM Tactics → Geographic Distribution → Targeted Sectors. Focus: WHAT HAPPENED.
+    2. **Threat Actor Profile** — single-actor deep-dive: Actor Profile (first/last seen, countries, preferred tactic, severity profile) → Activity Timeline (chronological incidents for THIS actor) → Attack Playbook (preferred techniques, behavioral patterns) → Diamond Model (actor-centric) → Defensive Actions Against [actor]. Focus: WHO is this actor.
+    3. **Incident Report** — single-threat deep-dive: Incident Details (full metadata table) → Description → IoCs (data types, network indicators) → ATM Mapping (THIS incident) → Cyber Kill Chain Reconstruction (7-stage, per-incident evidence) → Diamond Model (THIS incident) → Incident Risk Assessment → Related Threats (same actor/tactic) → Immediate Recommended Actions. Focus: THIS ONE incident.
+    4. **Campaign Analysis** — campaign-focused: Campaign Overview → Campaign Timeline (chronological) → Common Techniques Across Campaign (% of campaign) → Victim Overlap Analysis → Kill Chain Comparison Across Incidents → Campaign Impact Assessment (duration, peak activity) → Intelligence Breakdown (Strategic/Operational/Tactical). Focus: COORDINATED activity.
+    5. **Sector Threat Assessment** — sector-focused: Sector Assessment (auto-selects most-targeted sector) → All [sector] Sector Threats → Top Threat Actors Targeting [sector] → Common Attack Tactics Against [sector] (% of sector) → Geographic Distribution of [sector] Victims → Data Types Observed in Sector Breaches → Strategic Recommendations for [sector] Sector Defense. Focus: THIS sector.
+    6. **Ad-Hoc Report** — analyst-selected: Analyst-Selected Threat Analysis → Selected Threats → Cross-Threat Analysis: Shared Techniques → Shared Actors → Shared Sectors → Analyst Notes. Focus: ANALYST's selection.
+
+  * Shared helpers factored out: `computeStats()` (aggregates), `buildHeader()`, `buildMetadataTable()`, `buildGlossary()`, `buildDistribution()`, `buildFooter()`, `buildTimeRangeBlock()`. Each type-specific builder composes these with its unique body.
+
+  * **Auto-select fixes in `gatherThreats()`:**
+    - Incident Report: when `singleThreatId` is "all" or undefined, auto-selects the most recent threat (was returning `[]` → "No threat found").
+    - Threat Actor Profile: when `threatActor` is "all" or undefined, auto-selects the MOST ACTIVE actor in the window (was returning ALL threats, making it look like a weekly digest).
+    - Sector Assessment: when `sector` is "all" or undefined, auto-selects the MOST-TARGETED sector in the window (was returning ALL threats).
+    - The display name in each builder now derives the actor/sector name from the actual returned threats (not from `config`), so "all" never appears as a name.
+
+- **Verification (curl — side-by-side comparison of 4 types, 30d):**
+  | Type | Threats | Content | Key Sections |
+  |------|---------|---------|-------------|
+  | weekly-digest | 48 | 10413 chars | Executive Summary → Source Health → Trending ATM → Geographic → Sectors |
+  | threat-actor-profile | 15 | 6493 chars | Actor Profile → Activity Timeline (the gentlemen) → Attack Playbook → Defensive Actions |
+  | incident-report | 1 | 4868 chars | Incident Details → Description → IoCs → Kill Chain → Risk Assessment → Related Threats |
+  | campaign-analysis | 48 | 9683 chars | Campaign Overview → Timeline → Common Techniques → Victim Overlap → Impact Assessment |
+
+  Time-range accuracy confirmed: "Selected Window: Last 30 days | Actual Threat Date Range: 2026-06-25 → 2026-07-06". The Weekly Digest and Campaign Analysis both show 48 threats (all in 30d), but the Threat Actor Profile shows only 15 (just "the gentlemen"'s threats), and the Incident Report shows 1 (most recent). Each has completely distinct sections.
+
+- **Verification (agent-browser via Caddy :81):**
+  * Generated Weekly Digest (7d) in the browser → modal showed: Executive Summary, Threat Overview (with "Selected Window", "Actual Threat Date Range", "Date Spread" rows), "All Threats This Period (47)" heading, Source Health Summary, Trending ATM Tactics.
+  * Closed modal, selected Threat Actor Profile, generated (30d) → modal title: "Threat Actor Profile — 30d — Jul 7, 2026" (different from Weekly Digest's "7d"), subtitle "Focused profile of threat actor: most active". Sections: Actor Profile → Activity Timeline — the gentlemen (15 incidents) → Attack Playbook — the gentlemen → Defensive Actions Against the gentlemen. NO Executive Summary, NO Source Health — completely distinct from the Weekly Digest.
+- `bun run lint` clean; `tsc --noEmit` clean for the modified file (other files have pre-existing unrelated errors); no runtime errors in dev.log.
+
+Stage Summary:
+- CTI reports now have two major fixes:
+  1. **Time-range accuracy:** Every report shows BOTH the selected window AND the actual date range of matched threats (oldest→newest + date spread), so the analyst can immediately verify accuracy. Threat tables show ALL matched threats (not capped at 30) with the total count in the heading.
+  2. **Genuine per-type distinction:** Each of the 6 report types (Weekly Digest, Threat Actor Profile, Incident Report, Campaign Analysis, Sector Assessment, Ad-Hoc) now produces a COMPLETELY DIFFERENT document with type-specific sections, analysis structure, and focus. The old monolithic `buildTemplateReport` was replaced with a dispatcher + 6 type-specific builders + shared helpers. Auto-select logic now correctly picks the most active actor / most-targeted sector / most recent incident when "all" is selected, instead of returning empty or all threats. Verified via curl (4 types side-by-side, each with distinct sections and correct threat counts) and agent-browser (Weekly Digest vs Threat Actor Profile — visually different sections, different titles, different threat counts).

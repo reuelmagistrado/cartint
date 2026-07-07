@@ -175,12 +175,40 @@ async function gatherThreats(config: ReportConfig, since: Date) {
 
   switch (config.type) {
     case "incident-report": {
-      if (!config.singleThreatId) return [];
-      return db.threat.findMany({ where: { id: config.singleThreatId, ...accepted } });
+      // If a specific threat ID is given, fetch that one. Otherwise
+      // ("auto-select most recent"), fetch the most recent accepted threat.
+      if (config.singleThreatId && config.singleThreatId !== "all") {
+        return db.threat.findMany({ where: { id: config.singleThreatId, ...accepted } });
+      }
+      return db.threat.findMany({
+        where: { ...accepted, attackDate: { gte: since } },
+        orderBy: { attackDate: "desc" }, take: 1,
+      });
     }
     case "threat-actor-profile": {
+      // If a specific actor is named, fetch only their threats.
+      // If "all" or unspecified, auto-select the MOST ACTIVE actor in the
+      // window and profile them — this keeps the report actor-focused
+      // rather than turning into a generic threat list.
+      if (config.threatActor && config.threatActor !== "all") {
+        return db.threat.findMany({
+          where: { ...accepted, actor: config.threatActor, attackDate: { gte: since } },
+          orderBy: { attackDate: "desc" }, take: 50,
+        });
+      }
+      // Auto-select: find the most active actor, then fetch their threats.
+      const allRecent = await db.threat.findMany({
+        where: { ...accepted, attackDate: { gte: since }, actor: { not: null } },
+        select: { actor: true },
+      });
+      const actorCounts = new Map<string, number>();
+      for (const t of allRecent) {
+        if (t.actor) actorCounts.set(t.actor, (actorCounts.get(t.actor) || 0) + 1);
+      }
+      const topActor = [...actorCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!topActor) return [];
       return db.threat.findMany({
-        where: { ...accepted, actor: config.threatActor || undefined, attackDate: { gte: since } },
+        where: { ...accepted, actor: topActor, attackDate: { gte: since } },
         orderBy: { attackDate: "desc" }, take: 50,
       });
     }
@@ -192,8 +220,26 @@ async function gatherThreats(config: ReportConfig, since: Date) {
       return db.threat.findMany({ where, orderBy: { attackDate: "desc" }, take: 50 });
     }
     case "sector-assessment": {
+      // If a specific sector is named, fetch only threats in that sector.
+      // If "all" or unspecified, auto-select the MOST-TARGETED sector.
+      if (config.sector && config.sector !== "all") {
+        return db.threat.findMany({
+          where: { ...accepted, automotiveCategory: config.sector, attackDate: { gte: since } },
+          orderBy: { attackDate: "desc" }, take: 50,
+        });
+      }
+      const allRecentSectors = await db.threat.findMany({
+        where: { ...accepted, attackDate: { gte: since }, automotiveCategory: { not: null } },
+        select: { automotiveCategory: true },
+      });
+      const sectorCounts = new Map<string, number>();
+      for (const t of allRecentSectors) {
+        if (t.automotiveCategory) sectorCounts.set(t.automotiveCategory, (sectorCounts.get(t.automotiveCategory) || 0) + 1);
+      }
+      const topSector = [...sectorCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!topSector) return [];
       return db.threat.findMany({
-        where: { ...accepted, automotiveCategory: config.sector || undefined, attackDate: { gte: since } },
+        where: { ...accepted, automotiveCategory: topSector, attackDate: { gte: since } },
         orderBy: { attackDate: "desc" }, take: 50,
       });
     }
@@ -337,7 +383,604 @@ function getReportTypeRequirements(config: ReportConfig): string {
   }
 }
 
+// ============================================================================
 // Template-based fallback report (no LLM)
+//
+// Each report type produces a GENUINELY DISTINCT document — different
+// sections, different focus, different analysis structure. The shared
+// helpers (metadata table, glossary, distribution, TLP, stats) are factored
+// out; the type-specific builders compose them with unique bodies.
+// ============================================================================
+
+type ThreatStats = {
+  total: number;
+  bySeverity: { critical: number; high: number; medium: number; low: number };
+  byActor: Map<string, number>;
+  byCountry: Map<string, number>;
+  byTactic: Map<string, number>;
+  byTechnique: Map<string, number>;
+  byCategory: Map<string, number>;
+  bySource: Map<string, number>;
+  actors: Set<string>;
+  dataTypes: Set<string>;
+  dateRange: { oldest: Date | null; newest: Date | null };
+  sortedByDate: any[];
+};
+
+function computeStats(threats: any[]): ThreatStats {
+  const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+  const byActor = new Map<string, number>();
+  const byCountry = new Map<string, number>();
+  const byTactic = new Map<string, number>();
+  const byTechnique = new Map<string, number>();
+  const byCategory = new Map<string, number>();
+  const bySource = new Map<string, number>();
+  const actors = new Set<string>();
+  const dataTypes = new Set<string>();
+  const dates: Date[] = [];
+
+  for (const t of threats) {
+    bySeverity[t.severity as keyof typeof bySeverity] = (bySeverity[t.severity as keyof typeof bySeverity] || 0) + 1;
+    if (t.actor) { byActor.set(t.actor, (byActor.get(t.actor) || 0) + 1); actors.add(t.actor); }
+    if (t.country) byCountry.set(t.country, (byCountry.get(t.country) || 0) + 1);
+    if (t.atmTactic) byTactic.set(t.atmTactic, (byTactic.get(t.atmTactic) || 0) + 1);
+    if (t.atmTechnique) byTechnique.set(t.atmTechnique, (byTechnique.get(t.atmTechnique) || 0) + 1);
+    if (t.automotiveCategory) byCategory.set(t.automotiveCategory, (byCategory.get(t.automotiveCategory) || 0) + 1);
+    bySource.set(t.sourceName, (bySource.get(t.sourceName) || 0) + 1);
+    if (t.dataTypes) t.dataTypes.split(",").forEach((d: string) => dataTypes.add(d.trim()));
+    if (t.attackDate) dates.push(t.attackDate);
+  }
+
+  const sortedByDate = [...threats].sort((a, b) => {
+    const ad = a.attackDate ? new Date(a.attackDate).getTime() : 0;
+    const bd = b.attackDate ? new Date(b.attackDate).getTime() : 0;
+    return bd - ad; // newest first
+  });
+
+  const oldest = dates.length ? new Date(Math.min(...dates.map(d => new Date(d).getTime()))) : null;
+  const newest = dates.length ? new Date(Math.max(...dates.map(d => new Date(d).getTime()))) : null;
+
+  return {
+    total: threats.length,
+    bySeverity, byActor, byCountry, byTactic, byTechnique, byCategory, bySource,
+    actors, dataTypes, dateRange: { oldest, newest }, sortedByDate,
+  };
+}
+
+const topN = (m: Map<string, number>, n: number) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
+const fmtDate = (d: Date | null) => d ? d.toISOString().slice(0, 10) : "—";
+
+// ---- Shared header / footer helpers ----
+
+function buildHeader(meta: { title: string }, subtitle: string): string[] {
+  return [`# ${meta.title}`, "", `> ${subtitle}`, "", "---", ""];
+}
+
+function buildMetadataTable(
+  meta: { title: string }, reportId: string, date: string, priority: string,
+  tlp: string, company: string, reportTitle: string,
+): string[] {
+  return [
+    "## Report Metadata", "",
+    "| Field | Value |", "|---|---|",
+    `| **Report ID** | ${reportId} |`,
+    `| **Date** | ${date} |`,
+    `| **Priority** | ${priority} |`,
+    `| **Source & Information Reliability** | B-2 (Usually reliable / Probably true) |`,
+    `| **Sensitivity** | ${tlp} |`,
+    `| **Company Name** | ${company} |`,
+    `| **Report Title** | ${reportTitle} |`,
+    "",
+  ];
+}
+
+function buildGlossary(): string[] {
+  return [
+    "## Key Terminology", "",
+    "| Term | Definition |", "|---|---|",
+    "| **ATM** | Auto-ISAC Automotive Threat Matrix — vehicle-domain adaptation of MITRE ATT&CK |",
+    "| **VSOC** | Vehicle Security Operations Center |",
+    "| **RaaS** | Ransomware-as-a-Service |",
+    "| **SOCK Puppet** | Fictitious online persona for intelligence collection |",
+    "| **Double Extortion** | Ransomware model: encrypt + threaten to publish |",
+    "| **Telematics** | Telecommunications + informatics for remote vehicles |",
+    "| **OTA** | Over-the-Air — wireless software/firmware updates |",
+    "| **ECU** | Electronic Control Unit — embedded vehicle system controller |",
+    "| **Diamond Model** | Intrusion analysis framework: Adversary–Infrastructure–Capability–Victim |",
+    "| **Kill Chain** | Lockheed Martin's 7-stage attack progression model |",
+    "",
+  ];
+}
+
+function buildDistribution(tlp: string): string[] {
+  return [
+    "## Distribution", "",
+    "| Role | Dissemination |", "|---|---|",
+    "| Head of CTI | Full report |",
+    "| VSOC Lead | Full report |",
+    "| CTI Analyst (Author) | Full report |",
+    "| Auto-ISAC | Sanitized version (TLP:GREEN) |",
+    "",
+    "## TLP Classification", "",
+    `**${tlp}** — Sensitive information shared on a need-to-know basis within the organization and Auto-ISAC partners.`,
+    "",
+  ];
+}
+
+function buildFooter(): string[] {
+  return [
+    "---", "",
+    "*This report was generated with CARTINT — Automotive Threat Intelligence Dashboard. "
+    + "Data collected from OSINT sources, processed through LLM-based automotive relevance "
+    + "classification (confidence ≥ 70%), and mapped to the Auto-ISAC Automotive Threat Matrix. "
+    + "Generation method: template (LLM fallback).*",
+  ];
+}
+
+// Accurate time-range block: shows BOTH the selected window AND the actual
+// date range of the matched threats so the analyst can verify accuracy.
+function buildTimeRangeBlock(days: number, stats: ThreatStats): string[] {
+  const { oldest, newest } = stats.dateRange;
+  const spreadDays = oldest && newest
+    ? Math.max(1, Math.ceil((new Date(newest).getTime() - new Date(oldest).getTime()) / 86400000) + 1)
+    : 0;
+  return [
+    "| **Selected Window** | Last " + days + " days |",
+    "| **Actual Threat Date Range** | " + fmtDate(oldest) + " → " + fmtDate(newest) + " |",
+    "| **Threats in Window** | " + stats.total + " |",
+    "| **Date Spread** | " + (spreadDays > 0 ? spreadDays + " day" + (spreadDays > 1 ? "s" : "") : "—") + " |",
+  ];
+}
+
+// ---- Type-specific builders ----
+
+function buildWeeklyDigest(config: ReportConfig, threats: any[], days: number): string[] {
+  const s = computeStats(threats);
+  const L: string[] = [];
+  L.push("## Executive Summary", "");
+  L.push(`This Weekly Threat Digest summarizes **${s.total}** accepted automotive threats observed over the last **${days} days** (${fmtDate(s.dateRange.oldest)} → ${fmtDate(s.dateRange.newest)}). ${s.actors.size} unique threat actor${s.actors.size === 1 ? "" : "s"} were active across ${s.byCountry.size} countr${s.byCountry.size === 1 ? "y" : "ies"}. The most active actor was **${topN(s.byActor, 1)[0]?.[0] || "unattributed"}** (${topN(s.byActor, 1)[0]?.[1] || 0} incidents). Severity breakdown: **${s.bySeverity.critical} critical / ${s.bySeverity.high} high / ${s.bySeverity.medium} medium / ${s.bySeverity.low} low**.`, "");
+  L.push("## Threat Overview", "");
+  L.push("| Field | Value |", "|---|---|");
+  L.push(`| **Report Type** | Weekly Threat Digest |`);
+  L.push(...buildTimeRangeBlock(days, s));
+  L.push(`| **Unique Actors** | ${s.actors.size} |`);
+  L.push(`| **Countries Affected** | ${s.byCountry.size} |`);
+  L.push(`| **Severity Breakdown** | ${s.bySeverity.critical} Critical / ${s.bySeverity.high} High / ${s.bySeverity.medium} Medium / ${s.bySeverity.low} Low |`);
+  L.push("");
+  // Full threat list with count + ALL threats (not capped at 30)
+  L.push(`### All Threats This Period (${s.total})`, "");
+  L.push("| # | Date | Title | Severity | Actor | Victim | Country | ATM Tactic |");
+  L.push("|---|---|---|---|---|---|---|---|");
+  s.sortedByDate.forEach((t, i) => {
+    L.push(`| ${i + 1} | ${fmtDate(t.attackDate)} | ${String(t.title).slice(0, 50)} | ${t.severity} | ${t.actor || "—"} | ${t.victimOrg || "—"} | ${t.country || "—"} | ${t.atmTactic || "—"} |`);
+  });
+  L.push("");
+  // Source health
+  L.push("## Source Health Summary", "");
+  L.push("| Source | Threats | % of Total |", "|---|---|---|");
+  for (const [src, count] of topN(s.bySource, 10)) {
+    L.push(`| ${src} | ${count} | ${Math.round((count / s.total) * 100)}% |`);
+  }
+  L.push("");
+  // New actors
+  L.push("## Threat Actors Active This Period", "");
+  if (s.byActor.size === 0) { L.push("- No actors attributed in this period."); }
+  else {
+    L.push("| Actor | Incidents | Primary Tactic | Top Target Country |", "|---|---|---|---|");
+    for (const [actor, count] of topN(s.byActor, 10)) {
+      const actorThreats = threats.filter((t) => t.actor === actor);
+      const tacitc = topN(new Map(actorThreats.map((t) => [t.atmTactic || "—", 1])), 1)[0]?.[0] || "—";
+      const country = topN(new Map(actorThreats.map((t) => [t.country || "—", 1])), 1)[0]?.[0] || "—";
+      L.push(`| ${actor} | ${count} | ${tacitc} | ${country} |`);
+    }
+  }
+  L.push("");
+  // Trending tactics
+  L.push("## Trending ATM Tactics", "");
+  L.push("| ATM Tactic | Count | Top Technique |", "|---|---|---|");
+  for (const [tactic, count] of topN(s.byTactic, 14)) {
+    const techs = threats.filter((t) => t.atmTactic === tactic).map((t) => t.atmTechnique).filter(Boolean);
+    L.push(`| ${tactic} | ${count} | ${[...new Set(techs)][0] || "—"} |`);
+  }
+  L.push("");
+  // Geographic
+  L.push("## Geographic Distribution", "");
+  L.push("| Country | Threats |", "|---|---|");
+  for (const [country, count] of topN(s.byCountry, 15)) L.push(`| ${country} | ${count} |`);
+  L.push("");
+  // Sector breakdown
+  L.push("## Targeted Automotive Sectors", "");
+  L.push("| Sector | Threats |", "|---|---|");
+  for (const [cat, count] of topN(s.byCategory, 12)) L.push(`| ${cat} | ${count} |`);
+  L.push("");
+  return L;
+}
+
+function buildThreatActorProfile(config: ReportConfig, threats: any[], days: number): string[] {
+  const s = computeStats(threats);
+  // Derive the actor name from the actual threats (when "all" was selected,
+  // gatherThreats auto-selected the most active actor, so the threats are
+  // already filtered to that actor).
+  const derivedActor = topN(s.byActor, 1)[0]?.[0];
+  const actorName = (config.threatActor && config.threatActor !== "all")
+    ? config.threatActor
+    : (derivedActor ?? "Unattributed");
+  const actorThreats = threats.filter((t) => t.actor === actorName);
+  const L: string[] = [];
+  L.push("## Actor Profile", "");
+  L.push("| Attribute | Value |", "|---|---|");
+  L.push(`| **Actor Name** | ${actorName} |`);
+  L.push(`| **Total Attributed Threats** | ${actorThreats.length} |`);
+  L.push(`| **First Seen (in window)** | ${fmtDate(actorThreats.length ? actorThreats.reduce((min, t) => t.attackDate < min.attackDate ? t : min).attackDate : null)} |`);
+  L.push(`| **Last Seen (in window)** | ${fmtDate(actorThreats.length ? actorThreats.reduce((max, t) => t.attackDate > max.attackDate ? t : max).attackDate : null)} |`);
+  const actorCountries = new Map<string, number>();
+  actorThreats.forEach((t) => { if (t.country) actorCountries.set(t.country, (actorCountries.get(t.country) || 0) + 1); });
+  L.push(`| **Countries Targeted** | ${actorCountries.size} (${[...actorCountries.entries()].map(([c, n]) => `${c} (${n})`).join(", ") || "—"}) |`);
+  const actorTactics = new Map<string, number>();
+  actorThreats.forEach((t) => { if (t.atmTactic) actorTactics.set(t.atmTactic, (actorTactics.get(t.atmTactic) || 0) + 1); });
+  L.push(`| **Preferred ATM Tactic** | ${topN(actorTactics, 1)[0]?.[0] || "—"} (${topN(actorTactics, 1)[0]?.[1] || 0} uses) |`);
+  const actorSeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+  actorThreats.forEach((t) => { actorSeverity[t.severity as keyof typeof actorSeverity]++; });
+  L.push(`| **Severity Profile** | ${actorSeverity.critical}C / ${actorSeverity.high}H / ${actorSeverity.medium}M / ${actorSeverity.low}L |`);
+  L.push("");
+  // Activity trend (chronological)
+  L.push(`## Activity Timeline — ${actorName} (${actorThreats.length} incidents)`, "");
+  L.push("| Date | Victim | Country | Sector | Severity | ATM Tactic | ATM Technique |", "|---|---|---|---|---|---|---|");
+  [...actorThreats].sort((a, b) => new Date(a.attackDate).getTime() - new Date(b.attackDate).getTime()).forEach((t) => {
+    L.push(`| ${fmtDate(t.attackDate)} | ${t.victimOrg || "—"} | ${t.country || "—"} | ${t.automotiveCategory || "—"} | ${t.severity} | ${t.atmTactic || "—"} | ${t.atmTechnique || "—"} |`);
+  });
+  L.push("");
+  // Attack playbook
+  L.push(`## Attack Playbook — ${actorName}`, "");
+  L.push("### Preferred ATM Techniques", "");
+  L.push("| ATM Tactic | Technique | Uses |", "|---|---|---|");
+  const actorTechniques = new Map<string, number>();
+  actorThreats.forEach((t) => { if (t.atmTechnique) actorTechniques.set(t.atmTechnique, (actorTechniques.get(t.atmTechnique) || 0) + 1); });
+  for (const [tech, count] of topN(actorTechniques, 10)) {
+    const tactic = actorThreats.find((t) => t.atmTechnique === tech)?.atmTactic || "—";
+    L.push(`| ${tactic} | ${tech} | ${count} |`);
+  }
+  L.push("");
+  L.push("### Behavioral Patterns", "");
+  L.push(`- **Primary attack vector:** ${topN(actorTactics, 1)[0]?.[0] || "Unknown"} — observed in ${topN(actorTactics, 1)[0]?.[1] || 0} of ${actorThreats.length} incidents.`);
+  L.push(`- **Geographic focus:** ${topN(actorCountries, 3).map(([c, n]) => `${c} (${n})`).join(", ") || "Unknown"}.`);
+  const actorSectors = new Map<string, number>();
+  actorThreats.forEach((t) => { if (t.automotiveCategory) actorSectors.set(t.automotiveCategory, (actorSectors.get(t.automotiveCategory) || 0) + 1); });
+  L.push(`- **Targeted sectors:** ${topN(actorSectors, 5).map(([s, n]) => `${s} (${n})`).join(", ") || "Unknown"}.`);
+  L.push(`- **Severity bias:** ${actorSeverity.critical + actorSeverity.high} of ${actorThreats.length} incidents are critical/high severity (${actorThreats.length ? Math.round(((actorSeverity.critical + actorSeverity.high) / actorThreats.length) * 100) : 0}%).`);
+  L.push("");
+  // Diamond Model (actor-centric)
+  L.push(`## Diamond Model — ${actorName}`, "");
+  L.push("| Dimension | Details |", "|---|---|");
+  L.push(`| **Adversary** | ${actorName} — ${actorThreats.length} attributed incidents in the last ${days} days. |`);
+  L.push(`| **Infrastructure** | Tor hidden-service leak sites, dark-web forums for data publication and negotiation. |`);
+  L.push(`| **Victim** | ${actorCountries.size} countries: ${topN(actorCountries, 5).map(([c, n]) => `${c} (${n})`).join(", ") || "Unknown"}. Sectors: ${topN(actorSectors, 3).map(([s, n]) => `${s} (${n})`).join(", ") || "Unknown"}. |`);
+  L.push(`| **Capabilities** | ${topN(actorTactics, 5).map(([t, n]) => `${t} (${n})`).join(", ") || "N/A"}. Techniques: ${topN(actorTechniques, 5).map(([t, n]) => `${t} (${n})`).join(", ") || "N/A"}. |`);
+  L.push("");
+  // Actor-specific recommendations
+  L.push(`## Defensive Actions Against ${actorName}`, "");
+  L.push(`1. **Block & hunt:** Search environment for ${actorName}'s known victim-org patterns, leaked data, and infrastructure indicators.`);
+  L.push(`2. **Prioritize:** ${topN(actorSectors, 1)[0]?.[0] || "automotive"} sector assets — this actor's primary target.`);
+  L.push(`3. **Detect:** Build VSOC detection rules for ${topN(actorTechniques, 3).map(([t]) => t).join(", ") || "known actor techniques"}.`);
+  L.push(`4. **Monitor:** Track ${actorName}'s leak site for new victim announcements; set up dark-web alerts for your org name.`);
+  L.push(`5. **Prepare:** Review incident-response playbooks for ${topN(actorTactics, 1)[0]?.[0] || "initial access"} scenarios.`);
+  L.push("");
+  return L;
+}
+
+function buildIncidentReport(config: ReportConfig, threats: any[], days: number): string[] {
+  const t = threats[0];
+  const L: string[] = [];
+  if (!t) {
+    L.push("## Incident Details", "", "**No threat found matching the specified ID.**", "");
+    return L;
+  }
+  L.push("## Incident Details", "");
+  L.push("| Field | Value |", "|---|---|");
+  L.push(`| **Threat ID** | ${t.id} |`);
+  L.push(`| **Title** | ${t.title} |`);
+  L.push(`| **Severity** | ${t.severity.toUpperCase()} |`);
+  L.push(`| **Attack Date** | ${fmtDate(t.attackDate)} |`);
+  L.push(`| **Source** | ${t.sourceName} |`);
+  L.push(`| **Source URL** | ${t.sourceUrl || "—"} |`);
+  L.push(`| **Threat Actor** | ${t.actor || "Unattributed"} |`);
+  L.push(`| **Victim Organization** | ${t.victimOrg || "—"} |`);
+  L.push(`| **Victim Country** | ${t.country || "—"} |`);
+  L.push(`| **Automotive Sector** | ${t.automotiveCategory || "—"} |`);
+  L.push(`| **Relevance Score** | ${t.relevanceScore}/100 |`);
+  L.push(`| **Verified** | ${t.verified ? "Yes" : "No"} |`);
+  L.push("");
+  L.push("## Description", "");
+  L.push(t.description || "No description available.");
+  L.push("");
+  // IoCs
+  L.push("## Indicators of Compromise (IoCs)", "");
+  if (t.dataTypes) {
+    L.push("### Data Types Involved", "");
+    L.push("| Data Type |", "|---|");
+    t.dataTypes.split(",").forEach((d: string) => L.push(`| ${d.trim()} |`));
+    L.push("");
+  }
+  if (t.sourceUrl) {
+    L.push("### Network Indicators", "");
+    L.push("| Type | Indicator |", "|---|---|");
+    L.push(`| Source URL | ${t.sourceUrl} |`);
+    L.push("");
+  }
+  // ATM mapping for THIS incident
+  L.push("## ATM Mapping — This Incident", "");
+  L.push("| ATM Tactic | ATM Technique |", "|---|---|");
+  L.push(`| ${t.atmTactic || "—"} | ${t.atmTechnique || "—"} |`);
+  L.push("");
+  // Kill chain reconstruction for THIS incident
+  L.push("## Cyber Kill Chain Reconstruction", "");
+  L.push("| Stage | Assessment | Evidence |", "|---|---|---|");
+  L.push(`| **S1: Reconnaissance** | ${t.actor ? `${t.actor} likely identified ${t.victimOrg || "the victim"} as a target via OSINT/leak-site reconnaissance.` : "Unknown — actor unattributed."} | Target sector: ${t.automotiveCategory || "unknown"} |`);
+  L.push(`| **S2: Weaponization** | Adversary prepared ransomware payload / exfiltration tooling. | Inferred from attack pattern |`);
+  L.push(`| **S3: Delivery** | Initial access achieved (phishing, supply chain, or exposed service). | Source: ${t.sourceName} |`);
+  L.push(`| **S4: Exploitation** | ${t.atmTechnique || "Vulnerability/credential exploitation"} executed. | ATM: ${t.atmTactic || "—"} |`);
+  L.push(`| **S5: Installation** | Persistence established on victim network. | Inferred |`);
+  L.push(`| **S6: C2** | Command-and-control channel established. | Inferred |`);
+  L.push(`| **S7: Actions on Objective** | ${t.severity === "critical" ? "Data exfiltration + ransomware deployment + publication threat." : "Data exfiltration and/or ransomware deployment."} | Victim: ${t.victimOrg || "—"} (${t.country || "—"}) |`);
+  L.push("");
+  // Diamond Model for THIS incident
+  L.push("## Diamond Model — This Incident", "");
+  L.push("| Dimension | Details |", "|---|---|");
+  L.push(`| **Adversary** | ${t.actor || "Unattributed"} |`);
+  L.push(`| **Infrastructure** | ${t.sourceUrl?.includes(".onion") ? "Tor hidden service" : t.sourceUrl || "Dark-web leak site"} |`);
+  L.push(`| **Victim** | ${t.victimOrg || "—"} (${t.country || "—"}, ${t.automotiveCategory || "—"}) |`);
+  L.push(`| **Capability** | ${t.atmTactic || "—"}: ${t.atmTechnique || "—"} |`);
+  L.push("");
+  // Risk assessment for THIS incident
+  L.push("## Incident Risk Assessment", "");
+  L.push("| Factor | Assessment |", "|---|---|");
+  const risk = t.severity === "critical" ? "Critical" : t.severity === "high" ? "High" : t.severity === "medium" ? "Medium" : "Low";
+  L.push(`| **Severity** | ${risk} |`);
+  L.push(`| **Likelihood of Impact** | ${t.severity === "critical" || t.severity === "high" ? "High — active exploitation" : "Moderate"} |`);
+  L.push(`| **Automotive Relevance** | ${t.relevanceScore}/100 (confidence ${t.relevanceScore >= 85 ? "high" : t.relevanceScore >= 70 ? "medium" : "low"}) |`);
+  L.push("");
+  // Related threats (same actor or same tactic)
+  const related = threats.filter((x) => x.id !== t.id && (x.actor === t.actor || x.atmTactic === t.atmTactic)).slice(0, 10);
+  L.push("## Related Threats", "");
+  if (related.length === 0) {
+    L.push("- No related threats found in this dataset.");
+  } else {
+    L.push("| Date | Title | Actor | Shared Attribute |", "|---|---|---|---|");
+    related.forEach((r) => {
+      const shared = r.actor === t.actor ? `Same actor (${r.actor})` : `Same tactic (${r.atmTactic})`;
+      L.push(`| ${fmtDate(r.attackDate)} | ${String(r.title).slice(0, 50)} | ${r.actor || "—"} | ${shared} |`);
+    });
+  }
+  L.push("");
+  // Immediate actions
+  L.push("## Immediate Recommended Actions", "");
+  L.push(`1. **Assess exposure:** Determine if ${t.victimOrg || "your organization"} matches the victim profile.`);
+  L.push(`2. **Hunt for IOCs:** Search for ${t.actor || "threat actor"} indicators, source URLs, and data-type patterns in your environment.`);
+  L.push(`3. **Contain:** If related activity is found, isolate affected systems and activate incident response.`);
+  L.push(`4. **Patch:** Address any ${t.atmTechnique || "exploited"} vulnerabilities in your automotive infrastructure.`);
+  L.push(`5. **Report:** Escalate to VSOC lead and Auto-ISAC if the incident impacts your organization.`);
+  L.push("");
+  return L;
+}
+
+function buildCampaignAnalysis(config: ReportConfig, threats: any[], days: number): string[] {
+  const s = computeStats(threats);
+  const filterLabel = config.campaignFilterValue
+    ? `${config.campaignFilter}: ${config.campaignFilterValue}`
+    : `all threats (last ${days} days)`;
+  const L: string[] = [];
+  L.push("## Campaign Overview", "");
+  L.push(`This campaign analysis covers **${s.total}** threats filtered by **${filterLabel}**. The campaign spans ${fmtDate(s.dateRange.oldest)} → ${fmtDate(s.dateRange.newest)}.`, "");
+  L.push("| Field | Value |", "|---|---|");
+  L.push(...buildTimeRangeBlock(days, s));
+  L.push(`| **Campaign Filter** | ${filterLabel} |`);
+  L.push(`| **Unique Actors** | ${s.actors.size} |`);
+  L.push(`| **Victims** | ${new Set(threats.map((t) => t.victimOrg).filter(Boolean)).size} |`);
+  L.push("");
+  // Chronological timeline
+  L.push("## Campaign Timeline (Chronological)", "");
+  L.push("| # | Date | Actor | Victim | Country | Sector | Severity | ATM Tactic |", "|---|---|---|---|---|---|---|---|");
+  s.sortedByDate.slice().reverse().forEach((t, i) => {
+    L.push(`| ${i + 1} | ${fmtDate(t.attackDate)} | ${t.actor || "—"} | ${t.victimOrg || "—"} | ${t.country || "—"} | ${t.automotiveCategory || "—"} | ${t.severity} | ${t.atmTactic || "—"} |`);
+  });
+  L.push("");
+  // Common techniques across the campaign
+  L.push("## Common Techniques Across Campaign", "");
+  L.push("| ATM Tactic | ATM Technique | Occurrences | % of Campaign |", "|---|---|---|---|");
+  for (const [tactic, count] of topN(s.byTactic, 10)) {
+    const techs = new Map<string, number>();
+    threats.filter((t) => t.atmTactic === tactic).forEach((t) => { if (t.atmTechnique) techs.set(t.atmTechnique, (techs.get(t.atmTechnique) || 0) + 1); });
+    const topTech = topN(techs, 1)[0];
+    L.push(`| ${tactic} | ${topTech?.[0] || "—"} | ${count} | ${Math.round((count / s.total) * 100)}% |`);
+  }
+  L.push("");
+  // Victim overlap
+  L.push("## Victim Overlap Analysis", "");
+  const victimMap = new Map<string, number>();
+  threats.forEach((t) => { if (t.victimOrg) victimMap.set(t.victimOrg, (victimMap.get(t.victimOrg) || 0) + 1); });
+  L.push("| Victim | Incidents |", "|---|---|");
+  for (const [victim, count] of topN(victimMap, 15)) L.push(`| ${victim} | ${count} |`);
+  L.push("");
+  // Kill chain comparison
+  L.push("## Kill Chain Comparison Across Incidents", "");
+  L.push("| Stage | Pattern Observed |", "|---|---|");
+  L.push(`| **Reconnaissance** | ${s.byCategory.size} distinct sectors targeted — ${topN(s.byCategory, 1)[0]?.[0] || "unknown"} is the most targeted. |`);
+  L.push(`| **Delivery** | ${s.byActor.size} actor(s) involved; ${topN(s.byActor, 1)[0]?.[0] || "unattributed"} is the most active. |`);
+  L.push(`| **Exploitation** | ${topN(s.byTactic, 1)[0]?.[0] || "—"} is the dominant tactic (${topN(s.byTactic, 1)[0]?.[1] || 0} of ${s.total} incidents). |`);
+  L.push(`| **C2** | Dark-web leak sites used for communication/data publication. |`);
+  L.push(`| **Actions on Objective** | ${s.bySeverity.critical + s.bySeverity.high} of ${s.total} incidents reached high/critical impact. |`);
+  L.push("");
+  // Campaign impact
+  L.push("## Campaign Impact Assessment", "");
+  L.push("| Metric | Value |", "|---|---|");
+  L.push(`| **Total Incidents** | ${s.total} |`);
+  L.push(`| **Critical/High Severity** | ${s.bySeverity.critical + s.bySeverity.high} (${s.total ? Math.round(((s.bySeverity.critical + s.bySeverity.high) / s.total) * 100) : 0}%) |`);
+  L.push(`| **Countries Affected** | ${s.byCountry.size} |`);
+  L.push(`| **Sectors Affected** | ${s.byCategory.size} |`);
+  L.push(`| **Campaign Duration** | ${s.dateRange.oldest && s.dateRange.newest ? Math.max(1, Math.ceil((new Date(s.dateRange.newest).getTime() - new Date(s.dateRange.oldest).getTime()) / 86400000) + 1) : 0} days |`);
+  L.push(`| **Peak Activity** | ${fmtDate(s.dateRange.newest)} |`);
+  L.push("");
+  // Intel breakdown
+  L.push("## Intelligence Breakdown", "");
+  L.push("### STRATEGIC", "");
+  L.push(`**Audience:** C-suite, VSOC Leadership — This campaign involves ${s.actors.size} actor(s) targeting ${s.byCategory.size} automotive sectors across ${s.byCountry.size} countries. Strategic implication: ${s.bySeverity.critical + s.bySeverity.high > 5 ? "elevated threat to automotive supply chain" : "moderate, targeted threat activity"}.`);
+  L.push("");
+  L.push("### OPERATIONAL", "");
+  L.push(`**Audience:** VSOC Managers — Coordinate hunting efforts across ${s.byCountry.size} countries. Prioritize ${topN(s.byCategory, 3).map(([c]) => c).join(", ") || "affected"} sectors. Monitor ${topN(s.byActor, 3).map(([a]) => a).join(", ") || "active actors"} for continued activity.`);
+  L.push("");
+  L.push("### TACTICAL", "");
+  L.push(`**Audience:** SOC Analysts — Deploy detections for ${topN(s.byTechnique, 5).map(([t]) => t).join(", ") || "observed techniques"}. Hunt for ${topN(s.byActor, 1)[0]?.[0] || "actor"} indicators in environment.`);
+  L.push("");
+  return L;
+}
+
+function buildSectorAssessment(config: ReportConfig, threats: any[], days: number): string[] {
+  const s = computeStats(threats);
+  // Derive the sector name from the actual threats (when "all" was selected,
+  // gatherThreats auto-selected the most-targeted sector, so the threats are
+  // already filtered to that sector).
+  const derivedSector = topN(s.byCategory, 1)[0]?.[0];
+  const sectorName = (config.sector && config.sector !== "all")
+    ? config.sector
+    : (derivedSector ?? "automotive");
+  const sectorThreats = threats.filter((t) => t.automotiveCategory === sectorName);
+  const L: string[] = [];
+  L.push(`## Sector Assessment: ${sectorName}`, "");
+  L.push(`This assessment evaluates **${sectorThreats.length}** threats targeting the **${sectorName}** sector over the last **${days} days** (${fmtDate(s.dateRange.oldest)} → ${fmtDate(s.dateRange.newest)}).`, "");
+  L.push("| Field | Value |", "|---|---|");
+  L.push(`| **Sector** | ${sectorName} |`);
+  L.push(...buildTimeRangeBlock(days, s));
+  L.push(`| **Sector Threats** | ${sectorThreats.length} |`);
+  const sectorActors = new Set(sectorThreats.map((t) => t.actor).filter(Boolean));
+  L.push(`| **Active Actors** | ${sectorActors.size} |`);
+  const sectorCountries = new Set(sectorThreats.map((t) => t.country).filter(Boolean));
+  L.push(`| **Countries Affected** | ${sectorCountries.size} |`);
+  const sectorSeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+  sectorThreats.forEach((t) => { sectorSeverity[t.severity as keyof typeof sectorSeverity]++; });
+  L.push(`| **Severity (sector)** | ${sectorSeverity.critical}C / ${sectorSeverity.high}H / ${sectorSeverity.medium}M / ${sectorSeverity.low}L |`);
+  L.push("");
+  // All threats in this sector
+  L.push(`### All ${sectorName} Sector Threats (${sectorThreats.length})`, "");
+  L.push("| # | Date | Title | Severity | Actor | Victim | Country | ATM Tactic |", "|---|---|---|---|---|---|---|---|");
+  sectorThreats.sort((a, b) => new Date(b.attackDate).getTime() - new Date(a.attackDate).getTime()).forEach((t, i) => {
+    L.push(`| ${i + 1} | ${fmtDate(t.attackDate)} | ${String(t.title).slice(0, 50)} | ${t.severity} | ${t.actor || "—"} | ${t.victimOrg || "—"} | ${t.country || "—"} | ${t.atmTactic || "—"} |`);
+  });
+  L.push("");
+  // Top actors against this sector
+  L.push(`## Top Threat Actors Targeting ${sectorName}`, "");
+  const sectorActorMap = new Map<string, number>();
+  sectorThreats.forEach((t) => { if (t.actor) sectorActorMap.set(t.actor, (sectorActorMap.get(t.actor) || 0) + 1); });
+  if (sectorActorMap.size === 0) { L.push("- No actors attributed."); }
+  else {
+    L.push("| Actor | Incidents | Primary Tactic |", "|---|---|---|");
+    for (const [actor, count] of topN(sectorActorMap, 10)) {
+      const tactic = topN(new Map(sectorThreats.filter((t) => t.actor === actor).map((t) => [t.atmTactic || "—", 1])), 1)[0]?.[0] || "—";
+      L.push(`| ${actor} | ${count} | ${tactic} |`);
+    }
+  }
+  L.push("");
+  // Most common tactics used against this sector
+  L.push(`## Common Attack Tactics Against ${sectorName}`, "");
+  const sectorTactics = new Map<string, number>();
+  sectorThreats.forEach((t) => { if (t.atmTactic) sectorTactics.set(t.atmTactic, (sectorTactics.get(t.atmTactic) || 0) + 1); });
+  L.push("| ATM Tactic | Count | % of Sector | Top Technique |", "|---|---|---|---|");
+  for (const [tactic, count] of topN(sectorTactics, 14)) {
+    const techs = sectorThreats.filter((t) => t.atmTactic === tactic).map((t) => t.atmTechnique).filter(Boolean);
+    L.push(`| ${tactic} | ${count} | ${Math.round((count / sectorThreats.length) * 100)}% | ${[...new Set(techs)][0] || "—"} |`);
+  }
+  L.push("");
+  // Geographic distribution of sector victims
+  L.push(`## Geographic Distribution of ${sectorName} Victims`, "");
+  const sectorCountryMap = new Map<string, number>();
+  sectorThreats.forEach((t) => { if (t.country) sectorCountryMap.set(t.country, (sectorCountryMap.get(t.country) || 0) + 1); });
+  L.push("| Country | Victims |", "|---|---|");
+  for (const [country, count] of topN(sectorCountryMap, 15)) L.push(`| ${country} | ${count} |`);
+  L.push("");
+  // Data types exfiltrated
+  L.push("## Data Types Observed in Sector Breaches", "");
+  const sectorDataTypes = new Set<string>();
+  sectorThreats.forEach((t) => { if (t.dataTypes) t.dataTypes.split(",").forEach((d: string) => sectorDataTypes.add(d.trim())); });
+  if (sectorDataTypes.size > 0) {
+    L.push("| Data Type |", "|---|");
+    for (const dt of [...sectorDataTypes].slice(0, 15)) L.push(`| ${dt} |`);
+  } else {
+    L.push("- No specific data types catalogued for this sector.");
+  }
+  L.push("");
+  // Sector-specific recommendations
+  L.push(`## Strategic Recommendations for ${sectorName} Sector Defense`, "");
+  L.push(`1. **Sector-specific hunting:** Deploy detection rules targeting ${topN(sectorTactics, 3).map(([t]) => t).join(", ") || "observed tactics"} in ${sectorName} infrastructure.`);
+  L.push(`2. **Actor monitoring:** Track ${topN(sectorActorMap, 3).map(([a]) => a).join(", ") || "active actors"} for continued targeting of ${sectorName} organizations.`);
+  L.push(`3. **Geographic focus:** Prioritize defenses in ${topN(sectorCountryMap, 3).map(([c]) => c).join(", ") || "affected countries"} where ${sectorName} victims are concentrated.`);
+  L.push(`4. **Data protection:** Implement extra controls around ${[...sectorDataTypes].slice(0, 3).join(", ") || "sensitive automotive data"} — the primary exfiltration targets.`);
+  L.push(`5. **Information sharing:** Share ${sectorName}-sector IOCs with Auto-ISAC and sector ISAC partners for collective defense.`);
+  L.push("");
+  return L;
+}
+
+function buildAdHocReport(config: ReportConfig, threats: any[], days: number): string[] {
+  const s = computeStats(threats);
+  const L: string[] = [];
+  L.push("## Analyst-Selected Threat Analysis", "");
+  L.push(`This ad-hoc report covers **${threats.length}** manually selected threats. The analyst has chosen these threats for cross-analysis based on shared characteristics, patterns, or investigative interest.`, "");
+  L.push("| Field | Value |", "|---|---|");
+  L.push(`| **Selected Threats** | ${threats.length} |`);
+  L.push(`| **Date Range** | ${fmtDate(s.dateRange.oldest)} → ${fmtDate(s.dateRange.newest)} |`);
+  L.push(`| **Unique Actors** | ${s.actors.size} |`);
+  L.push(`| **Countries** | ${s.byCountry.size} |`);
+  L.push(`| **Sectors** | ${s.byCategory.size} |`);
+  L.push("");
+  // All selected threats
+  L.push("### Selected Threats", "");
+  L.push("| # | Date | Title | Severity | Actor | Victim | Sector | ATM Tactic |", "|---|---|---|---|---|---|---|---|");
+  s.sortedByDate.forEach((t, i) => {
+    L.push(`| ${i + 1} | ${fmtDate(t.attackDate)} | ${String(t.title).slice(0, 50)} | ${t.severity} | ${t.actor || "—"} | ${t.victimOrg || "—"} | ${t.automotiveCategory || "—"} | ${t.atmTactic || "—"} |`);
+  });
+  L.push("");
+  // Cross-threat analysis: shared techniques
+  L.push("## Cross-Threat Analysis: Shared Techniques", "");
+  L.push("| ATM Tactic | Technique | Threats Using It |", "|---|---|---|");
+  for (const [tactic, count] of topN(s.byTactic, 10)) {
+    const techs = new Map<string, number>();
+    threats.filter((t) => t.atmTactic === tactic).forEach((t) => { if (t.atmTechnique) techs.set(t.atmTechnique, (techs.get(t.atmTechnique) || 0) + 1); });
+    L.push(`| ${tactic} | ${topN(techs, 1)[0]?.[0] || "—"} | ${count} |`);
+  }
+  L.push("");
+  // Shared actors
+  L.push("## Cross-Threat Analysis: Shared Actors", "");
+  if (s.byActor.size === 0) {
+    L.push("- No actors attributed across the selected threats.");
+  } else {
+    L.push("| Actor | Threats | Shared Targets |", "|---|---|---|");
+    for (const [actor, count] of topN(s.byActor, 10)) {
+      const actorThreats = threats.filter((t) => t.actor === actor);
+      const targets = [...new Set(actorThreats.map((t) => t.victimOrg).filter(Boolean))].slice(0, 3).join(", ");
+      L.push(`| ${actor} | ${count} | ${targets || "—"} |`);
+    }
+  }
+  L.push("");
+  // Shared victims/sectors
+  L.push("## Cross-Threat Analysis: Shared Sectors", "");
+  if (s.byCategory.size === 0) {
+    L.push("- No sector data across selected threats.");
+  } else {
+    L.push("| Sector | Threats |", "|---|---|");
+    for (const [sector, count] of topN(s.byCategory, 10)) L.push(`| ${sector} | ${count} |`);
+  }
+  L.push("");
+  // Analyst notes
+  L.push("## Analyst Notes", "");
+  L.push(`- **Selection rationale:** ${threats.length} threat${threats.length === 1 ? "" : "s"} selected for cross-analysis.`);
+  L.push(`- **Common patterns:** ${topN(s.byTactic, 1)[0] ? `Most shared tactic is ${topN(s.byTactic, 1)[0][0]} (${topN(s.byTactic, 1)[0][1]} threats).` : "No common tactics identified."}`);
+  L.push(`- **Actor overlap:** ${s.actors.size} unique actor${s.actors.size === 1 ? "" : "s"} across the selection${s.actors.size > 0 ? `; ${topN(s.byActor, 1)[0]?.[0]} appears in ${topN(s.byActor, 1)[0]?.[1]} threat${topN(s.byActor, 1)[0]?.[1] === 1 ? "" : "s"}.` : "."}`);
+  L.push(`- **Temporal clustering:** Threats span ${s.dateRange.oldest && s.dateRange.newest ? Math.max(1, Math.ceil((new Date(s.dateRange.newest).getTime() - new Date(s.dateRange.oldest).getTime()) / 86400000) + 1) : 0} days.`);
+  L.push(`- **Severity distribution:** ${s.bySeverity.critical} critical, ${s.bySeverity.high} high, ${s.bySeverity.medium} medium, ${s.bySeverity.low} low.`);
+  L.push("");
+  return L;
+}
+
+// ---- Dispatcher: routes to the type-specific builder ----
+
 function buildTemplateReport(config: ReportConfig, threats: any[], days: number): string {
   const meta = REPORT_TYPE_META[config.type];
   const reportId = `CARTINT-CTI-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
@@ -345,263 +988,52 @@ function buildTemplateReport(config: ReportConfig, threats: any[], days: number)
   const priority = config.priority || "High";
   const tlp = config.tlp || "TLP:AMBER";
   const company = config.companyName || "[Organization Name Withheld]";
-
-  // Aggregate stats
-  const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
-  const byActor = new Map<string, number>();
-  const byCountry = new Map<string, number>();
-  const byTactic = new Map<string, number>();
-  const byCategory = new Map<string, number>();
-  const bySource = new Map<string, number>();
-  const actors = new Set<string>();
-  const dataTypes = new Set<string>();
-
-  for (const t of threats) {
-    bySeverity[t.severity as keyof typeof bySeverity]++;
-    if (t.actor) { byActor.set(t.actor, (byActor.get(t.actor) || 0) + 1); actors.add(t.actor); }
-    if (t.country) byCountry.set(t.country, (byCountry.get(t.country) || 0) + 1);
-    if (t.atmTactic) byTactic.set(t.atmTactic, (byTactic.get(t.atmTactic) || 0) + 1);
-    if (t.automotiveCategory) byCategory.set(t.automotiveCategory, (byCategory.get(t.automotiveCategory) || 0) + 1);
-    bySource.set(t.sourceName, (bySource.get(t.sourceName) || 0) + 1);
-    if (t.dataTypes) t.dataTypes.split(",").forEach((d: string) => dataTypes.add(d.trim()));
-  }
-
-  const top = (m: Map<string, number>, n: number) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
+  const subtitle = config.type === "threat-actor-profile"
+    ? `Focused profile of threat actor: ${config.threatActor || "most active"}`
+    : config.type === "sector-assessment"
+    ? `Sector-focused assessment: ${config.sector || "all sectors"}`
+    : config.type === "incident-report"
+    ? `Single-incident deep-dive analysis`
+    : config.type === "campaign-analysis"
+    ? `Campaign analysis filtered by ${config.campaignFilter || "actor"}${config.campaignFilterValue ? `: ${config.campaignFilterValue}` : ""}`
+    : config.type === "ad-hoc"
+    ? `Analyst-selected threats for cross-analysis`
+    : `Automotive threat summary for the last ${days} days`;
 
   const lines: string[] = [];
-  lines.push(`# ${meta.title}`);
-  lines.push("");
-  lines.push("---");
-  lines.push("");
-  lines.push("## Report Metadata");
-  lines.push("");
-  lines.push("| Field | Value |");
-  lines.push("|---|---|");
-  lines.push(`| **Report ID** | ${reportId} |`);
-  lines.push(`| **Date** | ${date} |`);
-  lines.push(`| **Priority** | ${priority} |`);
-  lines.push(`| **Source & Information Reliability** | B-2 (Usually reliable / Probably true) |`);
-  lines.push(`| **Sensitivity** | ${tlp} |`);
-  lines.push(`| **Company Name** | ${company} |`);
-  lines.push(`| **Report Title** | ${meta.title} — ${config.threatActor || config.sector || `${days}d window`} |`);
-  lines.push("");
-  lines.push("## Intelligence Requirements Addressed");
-  lines.push("");
+  lines.push(...buildHeader(meta, subtitle));
+  lines.push(...buildMetadataTable(meta, reportId, date, priority, tlp, company, `${meta.title} — ${config.threatActor || config.sector || subtitle}`));
+  lines.push("## Intelligence Requirements Addressed", "");
   lines.push(`1. **IR-01:** What threats are targeting the automotive sector in the last ${days} days?`);
   lines.push(`2. **IR-02:** What automotive-specific data types are being exfiltrated and sold?`);
   lines.push(`3. **IR-03:** What Auto-ISAC ATM techniques are being used against connected-vehicle infrastructure?`);
   lines.push("");
-  lines.push("## Data Sources");
-  lines.push("");
-  lines.push("- **darkweb** — RansomLook leak-site monitoring + Robin-style Tor search");
-  lines.push("- **asrg-advisories** — ASRG (Automotive Security Research Group) security advisories");
-  lines.push("- **bleepingcomputer** — Security news reporting on dark-web breaches");
-  lines.push("- **thehackernews** — Threat-intel news covering dark-web actor activity");
-  lines.push("- **LLM Classification** — All scraped content passed through LLM-based automotive relevance + false-positive filtering (confidence ≥ 70%)");
-  lines.push("");
-  lines.push("## Threat Overview");
-  lines.push("");
-  lines.push(`| Field | Value |`);
-  lines.push(`|---|---|`);
-  lines.push(`| **Report Type** | ${meta.title} |`);
-  lines.push(`| **Time Range** | Last ${days} days |`);
-  lines.push(`| **Total Threats** | ${threats.length} |`);
-  lines.push(`| **Unique Actors** | ${actors.size} |`);
-  lines.push(`| **Countries Affected** | ${byCountry.size} |`);
-  lines.push(`| **Severity Breakdown** | ${bySeverity.critical} Critical / ${bySeverity.high} High / ${bySeverity.medium} Medium / ${bySeverity.low} Low |`);
-  lines.push("");
 
-  // Threat list
-  if (threats.length > 0) {
-    lines.push("### Threats Included in This Report");
-    lines.push("");
-    lines.push("| # | Title | Severity | Actor | Source | ATM Tactic | Date |");
-    lines.push("|---|---|---|---|---|---|---|");
-    threats.slice(0, 30).forEach((t, i) => {
-      lines.push(`| ${i + 1} | ${t.title.slice(0, 60)} | ${t.severity} | ${t.actor || "—"} | ${t.sourceName} | ${t.atmTactic || "—"} | ${t.attackDate?.toISOString().slice(0, 10) || "—"} |`);
-    });
-    lines.push("");
+  // Type-specific body — each builder produces a DISTINCT structure
+  switch (config.type) {
+    case "weekly-digest":
+      lines.push(...buildWeeklyDigest(config, threats, days));
+      break;
+    case "threat-actor-profile":
+      lines.push(...buildThreatActorProfile(config, threats, days));
+      break;
+    case "incident-report":
+      lines.push(...buildIncidentReport(config, threats, days));
+      break;
+    case "campaign-analysis":
+      lines.push(...buildCampaignAnalysis(config, threats, days));
+      break;
+    case "sector-assessment":
+      lines.push(...buildSectorAssessment(config, threats, days));
+      break;
+    case "ad-hoc":
+    default:
+      lines.push(...buildAdHocReport(config, threats, days));
+      break;
   }
 
-  // Adversary Interest Analysis
-  lines.push("## Why the Adversary Is Interested in Automotive Targets");
-  lines.push("");
-  lines.push("### Assets");
-  lines.push("Connected vehicles generate and transmit vast amounts of data: VINs, owner PII, GPS location history, OTA update packages, telematics backend credentials, and ECU firmware. These assets represent high-value targets for financial gain, operational disruption, and safety-critical exposure.");
-  lines.push("");
-  lines.push("### Data Types Observed");
-  lines.push("");
-  if (dataTypes.size > 0) {
-    lines.push("| Data Type |");
-    lines.push("|---|");
-    for (const dt of [...dataTypes].slice(0, 15)) lines.push(`| ${dt} |`);
-  } else {
-    lines.push("No specific data types catalogued in this reporting period.");
-  }
-  lines.push("");
-
-  // Intelligence Levels
-  lines.push("## Intelligence Levels");
-  lines.push("");
-  lines.push("### STRATEGIC");
-  lines.push(`**Audience:** C-suite, Board, VSOC Leadership`);
-  lines.push("");
-  lines.push(`This ${meta.title} covers ${threats.length} automotive threats over the last ${days} days. ${actors.size} unique threat actors were observed targeting automotive organizations across ${byCountry.size} countries. The most active actor was ${top(byActor, 1)[0]?.[0] || "unattributed"} with ${top(byActor, 1)[0]?.[1] || 0} incidents. The most targeted sector was ${top(byCategory, 1)[0]?.[0] || "unknown"}.`);
-  lines.push("");
-  lines.push("### OPERATIONAL");
-  lines.push(`**Audience:** VSOC Managers, Threat Intelligence Analysts`);
-  lines.push("");
-  lines.push(`Top threat actors: ${top(byActor, 5).map(([a, c]) => `${a} (${c})`).join(", ") || "N/A"}. Sources: ${top(bySource, 5).map(([s, c]) => `${s} (${c})`).join(", ")}.`);
-  lines.push("");
-  lines.push("### TACTICAL");
-  lines.push(`**Audience:** SOC Analysts, Detection Engineers`);
-  lines.push("");
-  lines.push("Trending ATM tactics and techniques observed:");
-  lines.push("");
-  lines.push("| ATM Tactic | Count |");
-  lines.push("|---|---|");
-  for (const [tactic, count] of top(byTactic, 14)) lines.push(`| ${tactic} | ${count} |`);
-  lines.push("");
-
-  // Diamond Model
-  lines.push("## Diamond Model Analysis");
-  lines.push("");
-  lines.push("| Dimension | Details |");
-  lines.push("|---|---|");
-  lines.push(`| **Adversary** | ${actors.size} unique actors observed. Top: ${top(byActor, 3).map(([a, c]) => `${a} (${c} incidents)`).join(", ") || "Unattributed"} |`);
-  lines.push(`| **Infrastructure** | Tor hidden-service leak sites, dark-web forums, cellular communication channels for C2/exfil. |`);
-  lines.push(`| **Victim** | ${byCountry.size} countries affected. Top: ${top(byCountry, 5).map(([c, n]) => `${c} (${n})`).join(", ") || "Unknown"}. Sectors: ${top(byCategory, 5).map(([s, n]) => `${s} (${n})`).join(", ") || "Unknown"}. |`);
-  lines.push(`| **Capabilities** | Ransomware deployment, data exfiltration, credential compromise, OTA/telematics exploitation. ATM techniques: ${top(byTactic, 5).map(([t, n]) => `${t} (${n})`).join(", ") || "N/A"}. |`);
-  lines.push("");
-
-  // Cyber Kill Chain
-  lines.push("## Cyber Kill Chain Mapping");
-  lines.push("");
-  lines.push("| Stage | Activity | ATM Mapping |");
-  lines.push("|---|---|---|");
-  lines.push("| **S1: Reconnaissance** | Target information gathering from public/OSINT sources | ATM-T0076 (Gather Target Information) |");
-  lines.push("| **S2: Weaponization** | Crafting phishing emails, exploit payloads targeting automotive infrastructure | Varies by incident |");
-  lines.push("| **S3: Delivery** | Phishing emails, supply chain compromise, physical access | ATM-T0015 (Phishing) / ATM-T0010 (Aftermarket Equipment) |");
-  lines.push("| **S4: Exploitation** | Credential compromise, vulnerability exploitation | ATM-T0040 (Unsecured Credentials) |");
-  lines.push("| **S5: Installation** | Remote access tools, persistence mechanisms | ATM-T0021 (Disable Software Update) |");
-  lines.push("| **S6: Command & Control** | Cellular communication, internet communication channels | ATM-T0062 (Cellular Communication) |");
-  lines.push("| **S7: Actions on Objective** | Data exfiltration, ransomware deployment, vehicle function disruption | ATM-T0063 (Internet Communication) / ATM-T0072 (DoS on Vehicle Function) |");
-  lines.push("");
-
-  // ATM Mapping
-  lines.push("## Auto-ISAC ATM Mapping");
-  lines.push("");
-  lines.push("| ATM Tactic | Count | Top Techniques |");
-  lines.push("|---|---|---|");
-  for (const [tactic, count] of top(byTactic, 14)) {
-    const techs = threats.filter((t) => t.atmTactic === tactic).map((t) => t.atmTechnique).filter(Boolean);
-    const uniqueTechs = [...new Set(techs)].slice(0, 3);
-    lines.push(`| ${tactic} | ${count} | ${uniqueTechs.join(", ") || "—"} |`);
-  }
-  lines.push("");
-
-  // Collection Methodology
-  lines.push("## Dark-Web Collection Methodology");
-  lines.push("");
-  lines.push("### Intelligence Lifecycle Applied");
-  lines.push("");
-  lines.push(`1. **Planning & Collection** — PIRs defined: automotive threat actors, data types being sold, ATM techniques observed. Collection tasked to: RansomLook API, ASRG advisories, security RSS feeds.`);
-  lines.push(`2. **Processing** — Raw content processed through LLM classification: automotive relevance → false-positive filter → confidence scoring (≥ 70%). ${threats.length} threats accepted.`);
-  lines.push(`3. **Analysis & Production** — Accepted threats mapped to ATM. This report is the product.`);
-  lines.push(`4. **Dissemination** — Distributed via ${tlp} to authorized recipients.`);
-  lines.push("");
-
-  // Artifacts
-  lines.push("## Artifacts");
-  lines.push("");
-  lines.push("### Network Artifacts");
-  lines.push("");
-  lines.push("| Type | Description |");
-  lines.push("|---|---|");
-  const torUrls = threats.filter((t) => t.sourceUrl?.includes(".onion")).map((t) => t.sourceUrl);
-  if (torUrls.length > 0) {
-    for (const url of [...new Set(torUrls)].slice(0, 5)) lines.push(`| Tor Hidden Service | ${url} |`);
-  } else {
-    lines.push("| — | No Tor hidden-service URLs in this dataset |");
-  }
-  lines.push("");
-
-  // Risk Assessment
-  lines.push("## Risk Assessment");
-  lines.push("");
-  lines.push("| Factor | Assessment | Rationale |");
-  lines.push("|---|---|---|");
-  const likelihood = threats.length > 10 ? "Likely (55-75%)" : threats.length > 3 ? "Possible (30-55%)" : "Unlikely (10-30%)";
-  lines.push(`| **Likelihood** | **${likelihood}** | ${threats.length} automotive threats observed in ${days} days. |`);
-  lines.push(`| **Impact** | **High** | ${bySeverity.critical} critical + ${bySeverity.high} high severity threats. Automotive data breach, OT disruption, regulatory exposure. |`);
-  lines.push(`| **Overall Risk** | **${bySeverity.critical + bySeverity.high > 5 ? "High" : "Medium"}** | ${bySeverity.critical + bySeverity.high} critical/high threats require attention. |`);
-  lines.push("");
-
-  // Source Reliability
-  lines.push("## Source Reliability & Information Credibility");
-  lines.push("");
-  lines.push("| Source | Reliability | Credibility | Notes |");
-  lines.push("|---|---|---|---|");
-  lines.push("| darkweb (RansomLook) | B (Usually reliable) | 2 (Probably true) | Automated leak-site monitoring |");
-  lines.push("| asrg-advisories | A (Completely reliable) | 1 (Confirmed) | ASRG curated automotive CVEs |");
-  lines.push("| bleepingcomputer | B (Usually reliable) | 2 (Probably true) | Established security journalism |");
-  lines.push("| thehackernews | B (Usually reliable) | 2 (Probably true) | Established security journalism |");
-  lines.push("");
-
-  // Recommendations
-  lines.push("## Recommendations");
-  lines.push("");
-  lines.push("### Immediate (0-7 days)");
-  lines.push("1. Review all threats in this report for organizational relevance");
-  lines.push("2. Hunt for IOCs (Tor URLs, actor names) in environment");
-  lines.push("3. Verify MFA enforcement on telematics backend admin interfaces");
-  lines.push("");
-  lines.push("### Short-term (1-4 weeks)");
-  lines.push("4. Implement network segmentation between corporate IT and telematics backend");
-  lines.push("5. Deploy detection rules for cellular gateway anomalous outbound traffic");
-  lines.push("6. Enhance phishing training for automotive operations staff");
-  lines.push("");
-  lines.push("### Long-term (1-3 months)");
-  lines.push("7. Implement HSM-backed OTA signing key management");
-  lines.push("8. Integrate ATM technique mapping into VSOC detection engineering");
-  lines.push("9. Establish automated dark-web monitoring for organizational mentions");
-  lines.push("");
-
-  // Distribution
-  lines.push("## Distribution");
-  lines.push("");
-  lines.push("| Role | Dissemination |");
-  lines.push("|---|---|");
-  lines.push("| Head of CTI | Full report |");
-  lines.push("| VSOC Lead | Full report |");
-  lines.push("| CTI Analyst (Author) | Full report |");
-  lines.push("| Auto-ISAC | Sanitized version (TLP:GREEN) |");
-  lines.push("");
-
-  // TLP
-  lines.push("## TLP Classification");
-  lines.push("");
-  lines.push(`**${tlp}** — Sensitive information shared on a need-to-know basis within the organization and Auto-ISAC partners.`);
-  lines.push("");
-
-  // Glossary
-  lines.push("## Key Terminology");
-  lines.push("");
-  lines.push("| Term | Definition |");
-  lines.push("|---|---|");
-  lines.push("| **ATM** | Auto-ISAC Automotive Threat Matrix — vehicle-domain adaptation of MITRE ATT&CK |");
-  lines.push("| **VSOC** | Vehicle Security Operations Center |");
-  lines.push("| **RaaS** | Ransomware-as-a-Service |");
-  lines.push("| **SOCK Puppet** | Fictitious online persona for intelligence collection |");
-  lines.push("| **Double Extortion** | Ransomware model: encrypt + threaten to publish |");
-  lines.push("| **Telematics** | Telecommunications + informatics for remote vehicles |");
-  lines.push("| **OTA** | Over-the-Air — wireless software/firmware updates |");
-  lines.push("| **ECU** | Electronic Control Unit — embedded vehicle system controller |");
-  lines.push("");
-
-  lines.push("---");
-  lines.push("");
-  lines.push(`*This report was generated with CARTINT — Automotive Threat Intelligence Dashboard. Data collected from OSINT sources, processed through LLM-based automotive relevance classification (confidence ≥ 70%), and mapped to the Auto-ISAC Automotive Threat Matrix. Generation method: ${"template"} (LLM fallback).*`);
-
+  lines.push(...buildDistribution(tlp));
+  lines.push(...buildGlossary());
+  lines.push(...buildFooter());
   return lines.join("\n");
 }
