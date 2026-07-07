@@ -923,3 +923,38 @@ Work Log:
 
 Stage Summary:
 - The Threat Actor Profile report now covers ALL threat actors when "all actors" is selected, instead of silently profiling only the most active one. The report has a distinct multi-actor structure: Actor Landscape Overview → Comparative Actor Summary (all actors in one table) → Per-Actor Profiles (a mini-profile + timeline + diamond model for EACH actor) → Cross-Actor Analysis (shared tactics/sectors/geography) → Defensive Recommendations (All Actors). Both the LLM path (streaming, 71s) and the template fallback path (instant) produce the multi-actor report. The title correctly shows "all actors" instead of one actor name. Also fixed a stream controller race condition that was logging "Controller is already closed" errors. Verified: 16 actors profiled in the template path; 6+ actors visible in the LLM streaming output through the browser.
+
+---
+Task ID: 38 (self-healing mini-services — threat-feed-service + watchdog-scheduler down)
+Agent: main (Z.ai Code)
+Task: Fix "threat-feed-service and watchdog-scheduler are down, both show fetch failed" in the System Status panel.
+
+Work Log:
+- **Root cause:** The two mini-services (threat-feed-service on port 3003, watchdog-scheduler on port 3004) were not running. They had been started in earlier sessions via `nohup ... &` / `setsid ... &`, but the sandbox's process reaper kills backgrounded processes when the spawning shell session terminates. Only the Next.js dev server (port 3000) survived because it was started as the main dev process. The System Status panel calls `/api/system-status` which pings `localhost:3003/health` and `localhost:3004/health` — both returned "fetch failed" because nothing was listening on those ports.
+
+- **Solution: Self-healing via the system-status endpoint.** Since the Next.js dev server is the only persistent process, I made the `/api/system-status` endpoint auto-start the mini-services when it detects they're down. The endpoint uses `child_process.spawn` with `detached: true` + `child.unref()` to spawn a startup script that outlives the request lifecycle.
+
+- **Implementation:**
+
+  1. Created `/home/z/my-project/mini-services/start-services.sh` — a startup script that:
+     - Checks if port 3003 is listening; if not, starts `bun index.ts` in the threat-feed-service directory (detached, logs appended to `threat-feed-service.log`)
+     - Checks if port 3004 is listening; if not, starts `bun index.ts` in the watchdog-scheduler directory (detached, logs appended to `watchdog-scheduler.log`)
+     - Uses `nohup setsid bun index.ts ... < /dev/null &` to fully detach from the shell
+     - Reports final port status
+
+  2. Updated `/api/system-status/route.ts` with self-healing logic:
+     - Added `tryStartService(port)` — uses `child_process.spawn("bash", ["start-services.sh"], { detached: true, stdio: "ignore" })` + `child.unref()` to start the services. The spawned process is detached from the Next.js process group, so it persists.
+     - Added a 30-second cooldown per port (`START_COOLDOWN_MS = 30_000`) to avoid retrying too frequently if the service can't start.
+     - Added `pingServiceWithAutoStart()` — pings the service; if down, calls `tryStartService()`, waits 3s for the service to come up, then re-pings. If the re-ping succeeds, returns `status: "ok"` with `autoStarted: true` flag.
+     - The endpoint still returns the current status (down if the service didn't come up in 3s); the next poll (every 30s from the dashboard) will show "ok" once the service is up.
+
+- **Verification:**
+  * Killed all existing `bun index.ts` processes to simulate the down state.
+  * Called `GET /api/system-status` — the endpoint detected both services down, spawned the startup script, waited 3s, and re-pinged. Result: `watchdog-scheduler -> ok (auto-started)`, `threat-feed-service -> down (fetch failed, auto-start attempted)` (needed a few more seconds to come up).
+  * Called again 5s later: `overall: operational`, `Next.js Dashboard -> ok`, `threat-feed-service -> ok`, `watchdog-scheduler -> ok`. Both services now responding with health data (uptime, client count, health check count).
+  * Persistence check after 10s: both services still running, uptime increasing (70s), ports 3003 + 3004 still LISTENING.
+  * Browser verification (agent-browser via :81): System Status panel shows "OPERATIONAL" with both `threat-feed-service` and `watchdog-scheduler` showing "ok".
+  * `bun run lint` clean; no runtime errors in dev.log.
+
+Stage Summary:
+- The threat-feed-service (port 3003) and watchdog-scheduler (port 3004) are now self-healing. When the System Status panel polls `/api/system-status` and detects either service is down, the endpoint automatically spawns the `start-services.sh` script (detached via `child_process.spawn` + `unref()`) to restart it. The services persist because they're spawned by the Next.js server process (which is persistent) and detached from the request lifecycle. A 30s cooldown prevents restart loops. Verified: both services come back up within ~5s of being detected down, the System Status panel shows "OPERATIONAL" with all three services green, and the services stay up (uptime increasing over time). The "fetch failed" error is resolved.
