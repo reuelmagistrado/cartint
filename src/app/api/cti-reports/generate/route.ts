@@ -215,9 +215,15 @@ export async function POST(req: NextRequest) {
           // try to write more.
           if (clientDisconnected) return;
 
-          // If the LLM produced content, we're done
+          // If the LLM produced content, send an end-of-stream marker so the
+          // client knows the report is complete (even if the TCP connection
+          // closes uncleanly afterward). Then close the stream.
           if (content.trim()) {
             if (!metadataSent) sendMetadata("llm");
+            // End-of-stream marker — the client checks for this to know the
+            // report is truly complete, suppressing false "partially generated"
+            // warnings when the connection resets after all data is sent.
+            safeEnqueue("\n\n__END_OF_REPORT__\n");
             safeClose();
             return;
           }
@@ -227,6 +233,7 @@ export async function POST(req: NextRequest) {
           content = buildTemplateReport(config, threats, days);
           sendMetadata("template");
           safeEnqueue(content);
+          safeEnqueue("\n\n__END_OF_REPORT__\n");
           safeClose();
         } catch (err) {
           // If the client disconnected, just return — don't try to write.
@@ -240,6 +247,7 @@ export async function POST(req: NextRequest) {
             content = buildTemplateReport(config, threats, days);
             sendMetadata("template");
             safeEnqueue(content);
+            safeEnqueue("\n\n__END_OF_REPORT__\n");
             safeClose();
           } else {
             // Other errors — if we already streamed partial content, append an
@@ -250,6 +258,7 @@ export async function POST(req: NextRequest) {
               content = buildTemplateReport(config, threats, days);
               sendMetadata("template");
               safeEnqueue(content);
+              safeEnqueue("\n\n__END_OF_REPORT__\n");
             } else {
               safeEnqueue(`\n\n---\n*Error: LLM stream interrupted (${errMsg}). Partial report shown above.*`);
             }

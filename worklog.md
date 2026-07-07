@@ -997,3 +997,32 @@ Work Log:
 
 Stage Summary:
 - Fixed two streaming issues: (1) "network error" caused by "Controller is already closed" errors when the client disconnects — resolved by adding a `cancel()` handler that releases the LLM reader, making `sendMetadata` use `safeEnqueue`, and checking `clientDisconnected` before every write. (2) Trimmed/incomplete reports caused by the LLM hitting token limits — resolved by adding `max_tokens: 8192` and a prompt instruction to complete ALL sections. Also improved client-side error handling: partial content is now preserved and shown with a warning if the stream is interrupted, and network errors get clear, actionable messages. Verified: all 13 sections present in the LLM output, no controller errors in dev.log, no "network error" toasts in the browser.
+
+---
+Task ID: 40 (fix false "partially generated" warning — stream closes uncleanly)
+Agent: main (Z.ai Code)
+Task: Fix "Report partially generated — The stream was interrupted" showing even when the report is actually complete. Make sure the report is complete.
+
+Work Log:
+- **Root cause:** The server completes successfully (curl confirms HTTP 200, all 13 sections, 8KB+ content through "13. Glossary"), but the browser's `reader.read()` throws a network error near the end of the stream. This is common when streaming through proxies/gateways — the TCP connection resets right after the last data chunk, and the browser's fetch streaming API interprets this as an error. My previous code (Task 39) caught this error and showed "Report partially generated" regardless of whether the content was actually complete.
+
+- **Fix 1 — Server-side end-of-report marker:** The server now sends `\n\n__END_OF_REPORT__\n` as the very last chunk after all report content (both LLM and template paths). This is a definitive signal that the report is complete — even if the TCP connection closes uncleanly immediately after, the client has already received the marker and knows the report is done. Applied to all 4 completion paths: (a) LLM stream completed, (b) empty LLM output → template fallback, (c) content-filter error → template fallback, (d) other error → template fallback.
+
+- **Fix 2 — Client-side completeness check:** Added `isContentComplete(text)` that returns `true` if the content contains:
+  - The `__END_OF_REPORT__` marker (definitive), OR
+  - The final expected section heading (Glossary / Key Terminology / Distribution / generation footer) — heuristic fallback in case the marker is lost in a truncated chunk.
+
+- **Fix 3 — Client-side marker stripping:** Added `stripEndMarker(text)` that removes the `__END_OF_REPORT__` marker from the displayed content so the user never sees it.
+
+- **Fix 4 — Suppress false warnings:** The "partially generated" toast is now shown ONLY when `streamError` is set AND `isContentComplete(content)` returns `false`. If the stream errored but the content is complete (has the marker or the final section), the toast shows "CTI Report generated" (success) instead.
+
+- **Verification (curl direct :3000):** `POST /api/cti-reports/generate` → `HTTP 200` in `25.0s`. The response contains `__END_OF_REPORT__` at the end. Content: 8,350 bytes, 15 section headings.
+
+- **Verification (agent-browser via :81):** Clicked Generate Report → after 50s the modal showed the complete report with "LLM" badge and ALL 13 sections (1. Threat Overview → 2. Adversary Interest Analysis → 3. Intelligence Levels → 4. Diamond Model → 5. Cyber Kill Chain → 6. ATM Mapping → 7. Collection Methodology → 8. Artifacts → 9. Risk Assessment → 10. Source Reliability → 11. Recommendations → 12. Distribution → 13. Glossary). **No "partially generated" toast, no "network error" toast** — the success toast "CTI Report generated" was shown.
+
+- **Dev log:** `POST /api/cti-reports/generate 200 in 44s` — no controller errors. The `__END_OF_REPORT__` marker ensures the client knows the report is complete even if the connection resets.
+
+- `bun run lint` clean; `tsc --noEmit` clean; no runtime errors.
+
+Stage Summary:
+- The false "Report partially generated — The stream was interrupted" warning is resolved. The server now sends an `__END_OF_REPORT__` marker after all content, and the client checks for this marker (or the final section heading) to determine if the report is complete. If the stream closes uncleanly (common through proxies/gateways) but all data arrived, the client shows "CTI Report generated" (success) instead of the false "partially generated" warning. The marker is stripped from the displayed content. Verified end-to-end: all 13 sections present, LLM badge, no error toasts, complete report.

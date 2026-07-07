@@ -166,6 +166,31 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
       let lastUpdate = 0;
       let streamError: Error | null = null;
 
+      // Check if the report content looks complete — either the server sent
+      // the __END_OF_REPORT__ marker (definitive), or the content contains
+      // the final expected section (Glossary / Key Terminology / Distribution
+      // / generation footer). Used to suppress false "partially generated"
+      // warnings when the stream closes uncleanly but all data arrived.
+      const isContentComplete = (text: string): boolean => {
+        // Definitive: the server sends this marker after all content
+        if (text.includes("__END_OF_REPORT__")) return true;
+        const lower = text.toLowerCase();
+        // Heuristic: the report always ends with one of these sections
+        return (
+          lower.includes("key terminology") ||
+          lower.includes("## glossary") ||
+          lower.includes("## 13. glossary") ||
+          lower.includes("## distribution") ||
+          lower.includes("## 12. distribution") ||
+          lower.includes("generation method:") ||
+          lower.includes("this report was generated with cartint")
+        );
+      };
+
+      // Strip the __END_OF_REPORT__ marker from displayed content
+      const stripEndMarker = (text: string): string =>
+        text.replace(/\n\n__END_OF_REPORT__\n?$/i, "").replace(/__END_OF_REPORT__/g, "").trimEnd();
+
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -207,24 +232,32 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
           content += buffer;
         }
       } catch (readErr) {
-        // Network error during streaming — keep whatever content we received
+        // Network error during streaming — keep whatever content we received.
+        // This is common when streaming through proxies/gateways: the TCP
+        // connection may reset near the end even though all data arrived.
+        // We check below whether the content is actually complete.
         streamError = readErr instanceof Error ? readErr : new Error(String(readErr));
       } finally {
         clearTimeout(timeoutId);
         try { reader.releaseLock(); } catch { /* ignore */ }
       }
 
-      // If we got partial content, show it (even if the stream was interrupted)
+      // If we got content, show it
       if (reportObj && content.trim()) {
-        reportObj.content = content;
+        // Strip the end-of-report marker before displaying
+        const cleanContent = stripEndMarker(content);
+        reportObj.content = cleanContent;
         setReport({ ...reportObj });
         setStreamProgress("");
 
-        if (streamError) {
-          // Stream was interrupted but we have partial content
+        // Only show "partially generated" warning if the stream errored AND
+        // the content doesn't look complete. If the content has the final
+        // section or the __END_OF_REPORT__ marker, the report is complete —
+        // the stream just closed uncleanly.
+        if (streamError && !isContentComplete(content)) {
           toast({
             title: "Report partially generated",
-            description: "The stream was interrupted. The report may be incomplete — scroll to check all sections.",
+            description: "The stream was interrupted before the report completed. Please try regenerating.",
             variant: "destructive",
           });
         } else {
@@ -235,7 +268,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
         // No content at all
         if (streamError) {
           throw new Error(
-            streamError.message.includes("network")
+            streamError.message.includes("network") || streamError.name === "TypeError"
               ? "Network error during streaming. The LLM connection was lost. Please try again."
               : `Stream error: ${streamError.message}`
           );
