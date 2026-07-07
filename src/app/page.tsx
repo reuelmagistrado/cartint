@@ -43,7 +43,6 @@ import { WorldMap } from "@/components/dashboard/world-map";
 import { ScrapeSchedulePanel } from "@/components/dashboard/scrape-schedule-panel";
 import { SystemStatusPanel } from "@/components/dashboard/system-status-panel";
 import { ActorCompareDialog } from "@/components/dashboard/actor-compare-dialog";
-import { ThemeToggle } from "@/components/theme-toggle";
 import type { Stats, SourceInfo, AtmTacticData, Threat } from "@/components/dashboard/types";
 
 const PAGE_SIZE = 12;
@@ -381,7 +380,6 @@ export default function Home() {
               <Keyboard className="h-4 w-4" />
               <kbd className="ml-1 hidden rounded border border-slate-600 bg-slate-800 px-1 font-mono text-[9px] text-slate-400 sm:inline">?</kbd>
             </Button>
-            <ThemeToggle />
           </div>
         </div>
       </header>

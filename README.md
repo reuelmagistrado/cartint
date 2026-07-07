@@ -30,6 +30,13 @@ bun run dev
 
 The dashboard auto-seeds with 47+ sample automotive threats on first run, so you can explore the UI immediately.
 
+### Production mode (no dev overlay, faster, recommended for daily use)
+
+```bash
+bun run build
+bun run start
+```
+
 ---
 
 ## AI Provider Configuration
