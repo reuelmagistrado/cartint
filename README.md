@@ -104,7 +104,18 @@ AI_BASE_URL=http://localhost:11434/v1
 AI_MODEL=llama3.2
 ```
 
-### Option F: In-App Settings UI
+### Option F: Custom OpenAI-Compatible Provider
+
+Connect to any OpenAI-compatible API endpoint (Azure OpenAI, Together AI, Anyscale, vLLM, LM Studio, etc.):
+
+```bash
+AI_PROVIDER=custom
+AI_API_KEY=your-api-key
+AI_BASE_URL=https://your-provider.com/v1
+AI_MODEL=your-model-id
+```
+
+### Option G: In-App Settings UI
 
 Start the dashboard (`bun run dev`), go to the **CTI Reports** tab, and use the **AI Provider Settings** panel to select your provider and enter your API key. Settings are saved at runtime (no restart needed).
 

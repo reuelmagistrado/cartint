@@ -10,7 +10,7 @@
 // clone with no config, it falls back to the default Z.AI SDK which reads
 // .z-ai-config from the project/home dir.
 
-export type AIProvider = "zai" | "openai" | "anthropic" | "google" | "ollama";
+export type AIProvider = "zai" | "openai" | "anthropic" | "google" | "ollama" | "custom";
 
 export type AISettings = {
   provider: AIProvider;
@@ -61,6 +61,10 @@ export function isAIConfigured(): boolean {
   if (s.provider === "ollama") {
     return !!s.baseUrl;
   }
+  if (s.provider === "custom") {
+    // Custom OpenAI-compatible providers need both baseUrl AND apiKey
+    return !!s.baseUrl && !!s.apiKey;
+  }
   return !!s.apiKey;
 }
 
@@ -100,6 +104,13 @@ export const PROVIDER_DEFAULTS: Record<AIProvider, { baseUrl: string; model: str
     label: "Ollama (local, free)",
     needsKey: false,
     helpUrl: "https://ollama.com/download",
+  },
+  custom: {
+    baseUrl: "",
+    model: "",
+    label: "OpenAI Compatible (custom)",
+    needsKey: true,
+    helpUrl: "",
   },
 };
 
@@ -154,6 +165,7 @@ function createCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<C
     case "anthropic":
     case "google":
     case "ollama":
+    case "custom":
       return createOpenAiCompatibleCaller(s);
     default:
       return createZaiCaller(s);
