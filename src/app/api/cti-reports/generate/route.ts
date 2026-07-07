@@ -2,26 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import ZAI from "z-ai-web-dev-sdk";
 import {
   type ReportConfig,
+  type GeneratedReport,
   REPORT_TYPE_META,
   gatherThreats,
   buildReportPrompt,
   buildTemplateReport,
 } from "@/lib/cti-report-generator";
 import { isContentFilterError } from "@/lib/scraper/heuristic";
+import { createJob, getJob, completeJob, failJob, updateJobProgress } from "@/lib/report-jobs";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 min — streaming keeps the gateway alive
+export const maxDuration = 10; // Fast — just starts the job and returns
 
-// POST /api/cti-reports/generate — streams the LLM-generated CTI report.
+// POST /api/cti-reports/generate — starts async report generation.
 //
-// Streaming protocol (text/plain):
-//   Line 1: JSON metadata object (report id, title, type, method, etc.)
-//   Lines 2+: streamed Markdown content from the LLM (or template fallback)
+// Instead of streaming (which fails through the Caddy gateway because the
+// browser disconnects mid-stream on long responses), this endpoint:
+//   1. Gathers threats + builds the prompt
+//   2. Creates a job in memory
+//   3. Starts the LLM call in the background (not awaited)
+//   4. Immediately returns { ok: true, jobId }
 //
-// Streaming is used so the LLM can take as long as it needs — the gateway
-// sees continuous data flow (tokens arriving every few hundred ms) and
-// never times out. The template fallback is used ONLY for content-filter
-// errors (error code 1301) or when the LLM produces no output.
+// The client polls GET /api/cti-reports/status?jobId=xxx until status="complete",
+// then fetches the full report. Each poll is fast (<100ms), so no gateway timeout.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -87,212 +90,177 @@ export async function POST(req: NextRequest) {
       method: "llm" as const,
     };
 
-    const encoder = new TextEncoder();
+    // Create the job
+    const job = createJob();
 
-    // Track the LLM reader so the cancel() handler can release it when the
-    // client disconnects. Without this, the server keeps reading from the LLM
-    // after the client is gone, causing "Controller is already closed" errors.
-    let llmReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-    let clientDisconnected = false;
-
-    const stream = new ReadableStream<Uint8Array>({
-      // start() runs when the client connects. It reads the LLM stream and
-      // pipes chunks to the client. If the client disconnects, cancel() is
-      // called (below), which sets clientDisconnected and releases the LLM reader.
-      async start(controller) {
-        let content = "";
-        let metadataSent = false;
-
-        // ALL controller writes go through these safe helpers. They catch
-        // "Controller is already closed" errors that happen when the client
-        // disconnects mid-stream.
-        const safeEnqueue = (chunk: string) => {
-          if (clientDisconnected) return;
-          try {
-            controller.enqueue(encoder.encode(chunk));
-          } catch {
-            clientDisconnected = true;
-          }
-        };
-
-        const safeClose = () => {
-          if (clientDisconnected) return;
-          try {
-            controller.close();
-          } catch {
-            // already closed — ignore
-          }
-        };
-
-        const sendMetadata = (m: "llm" | "template") => {
-          if (metadataSent || clientDisconnected) return;
-          metadataSent = true;
-          const metaToSend = { ...reportMeta, method: m };
-          safeEnqueue(JSON.stringify(metaToSend) + "\n");
-        };
-
-        try {
-          const zai = await ZAI.create();
-          const result = await zai.chat.completions.create({
-            messages: [
-              { role: "assistant", content: prompt.systemPrompt },
-              { role: "user", content: prompt.userPrompt },
-            ],
-            stream: true,
-            thinking: { type: "disabled" },
-            // Allow a large output so the LLM can complete ALL 13 sections
-            // without hitting a token limit (default is often 4096 which
-            // truncates long reports). 8192 tokens ≈ 30-40KB of Markdown.
-            max_tokens: 8192,
-          });
-
-          // The SDK returns a ReadableStream when stream:true and the response
-          // is text/event-stream. Otherwise it returns the parsed JSON.
-          if (result instanceof ReadableStream) {
-            llmReader = result.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-
-            while (true) {
-              // If the client disconnected, stop reading from the LLM
-              if (clientDisconnected) break;
-
-              const { done, value } = await llmReader.read();
-              if (done) break;
-
-              buffer += decoder.decode(value, { stream: true });
-
-              // SSE format: lines starting with "data: " contain JSON
-              const lines = buffer.split("\n");
-              buffer = lines.pop() || ""; // keep incomplete line in buffer
-
-              for (const line of lines) {
-                if (!line.startsWith("data: ")) continue;
-                const data = line.slice(6).trim();
-                if (data === "[DONE]" || !data) continue;
-                try {
-                  const parsed = JSON.parse(data);
-                  const delta = parsed.choices?.[0]?.delta?.content || "";
-                  if (delta) {
-                    if (!metadataSent) sendMetadata("llm");
-                    content += delta;
-                    safeEnqueue(delta);
-                  }
-                } catch {
-                  // Non-JSON line (e.g., SSE comment) — skip
-                }
-              }
-            }
-
-            // Process any remaining buffer
-            if (!clientDisconnected && buffer.startsWith("data: ")) {
-              const data = buffer.slice(6).trim();
-              if (data && data !== "[DONE]") {
-                try {
-                  const parsed = JSON.parse(data);
-                  const delta = parsed.choices?.[0]?.delta?.content || "";
-                  if (delta) {
-                    if (!metadataSent) sendMetadata("llm");
-                    content += delta;
-                    safeEnqueue(delta);
-                  }
-                } catch {
-                  // skip
-                }
-              }
-            }
-
-            // Release the reader lock
-            try { llmReader.releaseLock(); } catch { /* ignore */ }
-            llmReader = null;
-          } else {
-            // Non-streaming JSON response (SDK fallback path)
-            const json = result as { choices?: { message?: { content?: string } }[] };
-            content = json.choices?.[0]?.message?.content ?? "";
-          }
-
-          // If the client disconnected during streaming, we're done — don't
-          // try to write more.
-          if (clientDisconnected) return;
-
-          // If the LLM produced content, send an end-of-stream marker so the
-          // client knows the report is complete (even if the TCP connection
-          // closes uncleanly afterward). Then close the stream.
-          if (content.trim()) {
-            if (!metadataSent) sendMetadata("llm");
-            // End-of-stream marker — the client checks for this to know the
-            // report is truly complete, suppressing false "partially generated"
-            // warnings when the connection resets after all data is sent.
-            safeEnqueue("\n\n__END_OF_REPORT__\n");
-            safeClose();
-            return;
-          }
-
-          // Empty LLM output — fall back to template
-          console.warn("[cti-report] LLM produced empty output, using template fallback.");
-          content = buildTemplateReport(config, threats, days);
-          sendMetadata("template");
-          safeEnqueue(content);
-          safeEnqueue("\n\n__END_OF_REPORT__\n");
-          safeClose();
-        } catch (err) {
-          // If the client disconnected, just return — don't try to write.
-          if (clientDisconnected) {
-            return;
-          }
-
-          // Content-filter error (code 1301) — fall back to template
-          if (isContentFilterError(err)) {
-            console.warn("[cti-report] LLM content-filtered, using template fallback.");
-            content = buildTemplateReport(config, threats, days);
-            sendMetadata("template");
-            safeEnqueue(content);
-            safeEnqueue("\n\n__END_OF_REPORT__\n");
-            safeClose();
-          } else {
-            // Other errors — if we already streamed partial content, append an
-            // error note; otherwise fall back to the template.
-            console.error("[cti-report] LLM stream failed:", err);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            if (!metadataSent) {
-              content = buildTemplateReport(config, threats, days);
-              sendMetadata("template");
-              safeEnqueue(content);
-              safeEnqueue("\n\n__END_OF_REPORT__\n");
-            } else {
-              safeEnqueue(`\n\n---\n*Error: LLM stream interrupted (${errMsg}). Partial report shown above.*`);
-            }
-            safeClose();
-          }
-        }
-      },
-
-      // cancel() is called when the client disconnects (closes the tab,
-      // navigates away, or the connection drops). We release the LLM reader
-      // so the server stops reading from the LLM and doesn't try to write
-      // to the closed controller.
-      cancel() {
-        clientDisconnected = true;
-        if (llmReader) {
-          try { llmReader.cancel(); } catch { /* ignore */ }
-          try { llmReader.releaseLock(); } catch { /* ignore */ }
-          llmReader = null;
-        }
-        console.log("[cti-report] Client disconnected — LLM reader released.");
-      },
+    // Start the LLM generation in the background (NOT awaited).
+    // The job is updated when generation completes or fails.
+    generateReportInBackground(job.id, config, prompt, reportMeta, threats, days).catch((err) => {
+      console.error(`[cti-report] Background generation crashed for job ${job.id}:`, err);
+      failJob(job.id, err instanceof Error ? err.message : String(err));
     });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+    // Return immediately with the job ID — the client polls for status
+    return NextResponse.json({ ok: true, jobId: job.id });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: (e as Error).message },
       { status: 500 },
     );
   }
+}
+
+// Background generation — runs the LLM call and updates the job store.
+// Not awaited by the request handler, so the HTTP response returns immediately.
+async function generateReportInBackground(
+  jobId: string,
+  config: ReportConfig,
+  prompt: { systemPrompt: string; userPrompt: string },
+  reportMeta: Record<string, unknown>,
+  threats: Awaited<ReturnType<typeof gatherThreats>>,
+  days: number,
+) {
+  let content = "";
+  let method: "llm" | "template" = "llm";
+
+  try {
+    const zai = await ZAI.create();
+    const result = await zai.chat.completions.create({
+      messages: [
+        { role: "assistant", content: prompt.systemPrompt },
+        { role: "user", content: prompt.userPrompt },
+      ],
+      stream: true,
+      thinking: { type: "disabled" },
+      max_tokens: 8192,
+    });
+
+    if (result instanceof ReadableStream) {
+      const reader = result.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let lastProgressUpdate = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]" || !data) continue;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta?.content || "";
+            if (delta) {
+              content += delta;
+              // Update progress every 2s for live preview (throttled)
+              const now = Date.now();
+              if (now - lastProgressUpdate > 2000) {
+                lastProgressUpdate = now;
+                updateJobProgress(jobId, content);
+              }
+            }
+          } catch {
+            // skip non-JSON lines
+          }
+        }
+      }
+
+      // Process remaining buffer
+      if (buffer.startsWith("data: ")) {
+        const data = buffer.slice(6).trim();
+        if (data && data !== "[DONE]") {
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta?.content || "";
+            if (delta) content += delta;
+          } catch { /* skip */ }
+        }
+      }
+      try { reader.releaseLock(); } catch { /* ignore */ }
+    } else {
+      const json = result as { choices?: { message?: { content?: string } }[] };
+      content = json.choices?.[0]?.message?.content ?? "";
+    }
+
+    // If the LLM produced content, complete the job
+    if (content.trim()) {
+      const report: GeneratedReport = {
+        ...(reportMeta as Omit<GeneratedReport, "content" | "summary" | "method">),
+        content,
+        summary: content.slice(0, 400),
+        method: "llm",
+      };
+      completeJob(jobId, report);
+      console.log(`[cti-report] Job ${jobId} completed — LLM, ${content.length} chars`);
+      return;
+    }
+
+    // Empty LLM output — fall back to template
+    console.warn(`[cti-report] Job ${jobId} — LLM empty, using template`);
+    content = buildTemplateReport(config, threats, days);
+    method = "template";
+    const templateReport: GeneratedReport = {
+      ...(reportMeta as Omit<GeneratedReport, "content" | "summary" | "method">),
+      content,
+      summary: content.slice(0, 400),
+      method: "template",
+    };
+    completeJob(jobId, templateReport);
+  } catch (err) {
+    // Content-filter error → template fallback
+    if (isContentFilterError(err)) {
+      console.warn(`[cti-report] Job ${jobId} — content-filtered, using template`);
+      content = buildTemplateReport(config, threats, days);
+      const templateReport: GeneratedReport = {
+        ...(reportMeta as Omit<GeneratedReport, "content" | "summary" | "method">),
+        content,
+        summary: content.slice(0, 400),
+        method: "template",
+      };
+      completeJob(jobId, templateReport);
+      return;
+    }
+
+    // Other error — if we have partial content, use it; otherwise fail
+    if (content.trim()) {
+      console.warn(`[cti-report] Job ${jobId} — LLM error but have partial content (${content.length} chars)`);
+      const partialReport: GeneratedReport = {
+        ...(reportMeta as Omit<GeneratedReport, "content" | "summary" | "method">),
+        content: content + "\n\n---\n*Note: LLM generation was interrupted. Partial report shown.*",
+        summary: content.slice(0, 400),
+        method: "llm",
+      };
+      completeJob(jobId, partialReport);
+    } else {
+      failJob(jobId, err instanceof Error ? err.message : String(err));
+    }
+  }
+}
+
+// GET /api/cti-reports/generate — returns job status (for polling)
+export async function GET(req: NextRequest) {
+  const jobId = new URL(req.url).searchParams.get("jobId");
+  if (!jobId) {
+    return NextResponse.json({ ok: false, error: "Missing jobId parameter" }, { status: 400 });
+  }
+  const job = getJob(jobId);
+  if (!job) {
+    return NextResponse.json({ ok: false, error: "Job not found (may have expired)" }, { status: 404 });
+  }
+  return NextResponse.json({
+    ok: true,
+    jobId: job.id,
+    status: job.status,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    elapsed: Date.now() - job.startedAt,
+    progress: job.progress.slice(-500), // last 500 chars for live preview
+    error: job.error,
+  });
 }

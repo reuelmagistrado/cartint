@@ -103,7 +103,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
     setGenerating(true);
     setReport(null);
     setStreamProgress("");
-    toast({ title: "Generating CTI Report…", description: "The LLM is analyzing all threats in the selected time range. Streaming the report as it's written — this can take 30-90s." });
+    toast({ title: "Generating CTI Report…", description: "The LLM is analyzing all threats in the selected time range. This takes 30-90s — the report will appear when complete." });
     try {
       const config: Record<string, unknown> = {
         type: reportType,
@@ -123,163 +123,93 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
       }
       if (reportType === "ad-hoc" && selectedThreatIds.length > 0) config.threatIds = selectedThreatIds;
 
-      // Stream the response — the server sends metadata (JSON) on line 1,
-      // then the LLM-generated Markdown content token-by-token.
-      // 5-minute client timeout as a safety net (the server has maxDuration=300s).
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300_000);
+      // Step 1: Start the generation job (returns immediately with a jobId)
+      const startRes = await fetch("/api/cti-reports/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+        signal: AbortSignal.timeout(15000),
+      });
 
-      let res: Response;
-      try {
-        res = await fetch("/api/cti-reports/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(config),
-          signal: controller.signal,
+      if (!startRes.ok) {
+        const text = await startRes.text().catch(() => "");
+        throw new Error(text || `Server returned ${startRes.status}`);
+      }
+
+      const startJson = await startRes.json();
+      if (!startJson.ok || !startJson.jobId) {
+        throw new Error(startJson.error || "Failed to start report generation");
+      }
+
+      const jobId = startJson.jobId;
+
+      // Step 2: Poll for completion. Each poll is a fast GET (<100ms), so no
+      // gateway timeout. Poll every 2s for up to 5 minutes.
+      const POLL_INTERVAL_MS = 2000;
+      const MAX_POLL_MS = 300_000; // 5 min
+      const startTime = Date.now();
+      let lastProgressLen = 0;
+
+      while (true) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed > MAX_POLL_MS) {
+          throw new Error("Report generation timed out after 5 minutes. The LLM may be overloaded — please try again.");
+        }
+
+        // Wait before polling
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+        const pollRes = await fetch(`/api/cti-reports/generate?jobId=${encodeURIComponent(jobId)}`, {
+          signal: AbortSignal.timeout(10000),
         });
-      } catch (fetchErr) {
-        clearTimeout(timeoutId);
-        throw new Error(
-          fetchErr instanceof Error && fetchErr.name === "AbortError"
-            ? "Request timed out after 5 minutes. The LLM may be overloaded — please try again."
-            : "Network error — could not connect to the report server. Check your connection and try again."
-        );
-      }
 
-      if (!res.ok) {
-        clearTimeout(timeoutId);
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `Server returned ${res.status}`);
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) {
-        clearTimeout(timeoutId);
-        throw new Error("No response stream from server");
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let metaParsed = false;
-      let reportObj: GeneratedReport | null = null;
-      let content = "";
-      let lastUpdate = 0;
-      let streamError: Error | null = null;
-
-      // Check if the report content looks complete — either the server sent
-      // the __END_OF_REPORT__ marker (definitive), or the content contains
-      // the final expected section (Glossary / Key Terminology / Distribution
-      // / generation footer). Used to suppress false "partially generated"
-      // warnings when the stream closes uncleanly but all data arrived.
-      const isContentComplete = (text: string): boolean => {
-        // Definitive: the server sends this marker after all content
-        if (text.includes("__END_OF_REPORT__")) return true;
-        const lower = text.toLowerCase();
-        // Heuristic: the report always ends with one of these sections
-        return (
-          lower.includes("key terminology") ||
-          lower.includes("## glossary") ||
-          lower.includes("## 13. glossary") ||
-          lower.includes("## distribution") ||
-          lower.includes("## 12. distribution") ||
-          lower.includes("generation method:") ||
-          lower.includes("this report was generated with cartint")
-        );
-      };
-
-      // Strip the __END_OF_REPORT__ marker from displayed content
-      const stripEndMarker = (text: string): string =>
-        text.replace(/\n\n__END_OF_REPORT__\n?$/i, "").replace(/__END_OF_REPORT__/g, "").trimEnd();
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // First line is JSON metadata (up to first \n)
-          if (!metaParsed) {
-            const newlineIdx = buffer.indexOf("\n");
-            if (newlineIdx >= 0) {
-              const metaLine = buffer.slice(0, newlineIdx);
-              buffer = buffer.slice(newlineIdx + 1);
-              try {
-                reportObj = JSON.parse(metaLine) as GeneratedReport;
-                metaParsed = true;
-              } catch {
-                throw new Error("Failed to parse report metadata from stream");
-              }
-            }
+        if (!pollRes.ok) {
+          // 404 = job expired; continue polling a few times in case of transient error
+          if (pollRes.status === 404) {
+            throw new Error("Report job not found — it may have expired. Please try again.");
           }
-
-          // Accumulate content and show progressive updates (throttled to 500ms)
-          if (metaParsed && buffer) {
-            content += buffer;
-            buffer = "";
-            const now = Date.now();
-            if (now - lastUpdate > 500 && reportObj) {
-              lastUpdate = now;
-              // Progressive render — update the report with partial content
-              setReport({ ...reportObj, content });
-              setStreamProgress(content);
-            }
-          }
+          continue; // transient error, keep polling
         }
 
-        // Process any remaining buffer
-        if (metaParsed && buffer) {
-          content += buffer;
+        const pollJson = await pollRes.json();
+
+        // Show progress preview if available
+        if (pollJson.progress && pollJson.progress.length > lastProgressLen) {
+          lastProgressLen = pollJson.progress.length;
+          setStreamProgress(pollJson.progress);
         }
-      } catch (readErr) {
-        // Network error during streaming — keep whatever content we received.
-        // This is common when streaming through proxies/gateways: the TCP
-        // connection may reset near the end even though all data arrived.
-        // We check below whether the content is actually complete.
-        streamError = readErr instanceof Error ? readErr : new Error(String(readErr));
-      } finally {
-        clearTimeout(timeoutId);
-        try { reader.releaseLock(); } catch { /* ignore */ }
-      }
 
-      // If we got content, show it
-      if (reportObj && content.trim()) {
-        // Strip the end-of-report marker before displaying
-        const cleanContent = stripEndMarker(content);
-        reportObj.content = cleanContent;
-        setReport({ ...reportObj });
-        setStreamProgress("");
-
-        // Only show "partially generated" warning if the stream errored AND
-        // the content doesn't look complete. If the content has the final
-        // section or the __END_OF_REPORT__ marker, the report is complete —
-        // the stream just closed uncleanly.
-        if (streamError && !isContentComplete(content)) {
-          toast({
-            title: "Report partially generated",
-            description: "The stream was interrupted before the report completed. Please try regenerating.",
-            variant: "destructive",
+        if (pollJson.status === "complete") {
+          // Step 3: Fetch the full report
+          setStreamProgress("");
+          const resultRes = await fetch(`/api/cti-reports/result?jobId=${encodeURIComponent(jobId)}`, {
+            signal: AbortSignal.timeout(10000),
           });
-        } else {
-          const methodNote = reportObj.method === "template" ? " (template fallback — content filtered)" : "";
-          toast({ title: "CTI Report generated", description: reportObj.title + methodNote });
+          if (!resultRes.ok) {
+            throw new Error("Failed to fetch completed report");
+          }
+          const resultJson = await resultRes.json();
+          if (!resultJson.ok || !resultJson.report) {
+            throw new Error("Completed report was empty");
+          }
+          const report = resultJson.report as GeneratedReport;
+          setReport(report);
+          const methodNote = report.method === "template" ? " (template fallback)" : "";
+          toast({ title: "CTI Report generated", description: report.title + methodNote });
+          break;
         }
-      } else {
-        // No content at all
-        if (streamError) {
-          throw new Error(
-            streamError.message.includes("network") || streamError.name === "TypeError"
-              ? "Network error during streaming. The LLM connection was lost. Please try again."
-              : `Stream error: ${streamError.message}`
-          );
+
+        if (pollJson.status === "error") {
+          throw new Error(pollJson.error || "Report generation failed on the server");
         }
-        throw new Error("No report data received from stream");
+
+        // status === "pending" — keep polling
       }
     } catch (e) {
       const msg = (e as Error).message;
-      if (msg.includes("abort") || msg.includes("timed out") || msg.includes("Timeout")) {
+      if (msg.includes("abort") || msg.includes("timed out") || msg.includes("Timeout") || msg.includes("timed out after")) {
         toast({ title: "Report generation timed out", description: "The request took too long. Please try again.", variant: "destructive" });
-      } else if (msg.includes("network") || msg.includes("Network")) {
+      } else if (msg.includes("network") || msg.includes("Network") || msg.includes("fetch")) {
         toast({ title: "Network error", description: msg, variant: "destructive" });
       } else {
         toast({ title: "Report generation failed", description: msg, variant: "destructive" });
