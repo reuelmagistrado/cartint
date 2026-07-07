@@ -250,6 +250,8 @@ bun run build
 bun run start
 ```
 
+`bun run start` forces Prisma to use `db/custom.db` in the repository root, even though the compiled Next.js server runs from `.next/standalone`. It also runs `prisma db push` before starting so a fresh production database has the required schema.
+
 Useful checks:
 
 ```bash
