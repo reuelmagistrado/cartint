@@ -542,12 +542,12 @@ export default function Home() {
         <ScrapeHistoryChart />
 
         {/* World map + scrape schedule (left col) / actor spotlight + severity donut (right col) */}
-        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-3">
           <div className="flex flex-col gap-4 lg:col-span-2">
             <WorldMap stats={stats} />
-            <ScrapeSchedulePanel />
+            <ScrapeSchedulePanel className="min-h-0 flex-1" />
           </div>
-          <div className="space-y-4">
+          <div className="flex flex-col gap-4">
             <ActorSpotlight
               stats={stats}
               onSelectActor={setActorProfile}
@@ -563,7 +563,7 @@ export default function Home() {
               }
               onOpenCompare={() => setCompareOpen(true)}
             />
-            <SeverityDonut stats={stats} />
+            <SeverityDonut stats={stats} className="min-h-0 flex-1" />
           </div>
         </div>
 

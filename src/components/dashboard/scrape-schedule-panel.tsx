@@ -19,7 +19,7 @@ type SourceConfig = {
 
 const PRESET_INTERVALS = [0, 15, 30, 60, 180, 360];
 
-export function ScrapeSchedulePanel() {
+export function ScrapeSchedulePanel({ className = "" }: { className?: string }) {
   const { toast } = useToast();
   const [sources, setSources] = useState<SourceConfig[]>([]);
   const [original, setOriginal] = useState<SourceConfig[]>([]);
@@ -72,7 +72,7 @@ export function ScrapeSchedulePanel() {
   const autoCount = sources.filter((s) => s.enabled && s.scrapeIntervalMin > 0).length;
 
   return (
-    <Card className="flex min-h-0 flex-col overflow-hidden border-slate-700/60 bg-slate-900/40">
+    <Card className={`flex min-h-0 flex-col overflow-hidden border-slate-700/60 bg-slate-900/40 ${className}`}>
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-700/60 p-4">
         <div className="min-w-0 flex-1">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">

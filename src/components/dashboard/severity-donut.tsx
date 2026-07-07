@@ -7,7 +7,7 @@ import type { Stats } from "./types";
 
 // Compact severity-distribution donut chart for at-a-glance severity posture.
 // Renders the critical/high/medium/low split with a center total.
-export function SeverityDonut({ stats }: { stats: Stats | null }) {
+export function SeverityDonut({ stats, className = "" }: { stats: Stats | null; className?: string }) {
   const c = stats?.criticalCount ?? 0;
   const h = stats?.highCount ?? 0;
   const m = stats?.mediumCount ?? 0;
@@ -22,7 +22,7 @@ export function SeverityDonut({ stats }: { stats: Stats | null }) {
   ].filter((d) => d.value > 0);
 
   return (
-    <Card className="flex items-center gap-4 border-slate-700/60 bg-slate-900/40 p-4">
+    <Card className={`flex items-center gap-4 border-slate-700/60 bg-slate-900/40 p-4 ${className}`}>
       <div className="relative h-[110px] w-[110px] shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
