@@ -12,6 +12,8 @@ import {
   FileText, Loader2, FileDown, Printer, ChevronLeft, Settings2,
   Calendar, AlertTriangle, Shield, Globe, Users, Target,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Threat } from "./types";
 
 type ReportType = "weekly-digest" | "threat-actor-profile" | "incident-report" | "campaign-analysis" | "sector-assessment" | "ad-hoc";
@@ -473,9 +475,34 @@ ${renderMarkdownToHtml(report.content)}
 
                 {/* Report content */}
                 <ScrollArea className="max-h-[calc(100vh-220px)]">
-                  <article className="prose prose-invert prose-sm max-w-none p-5 prose-headings:text-slate-100 prose-p:text-slate-300 prose-li:text-slate-300 prose-strong:text-slate-100 prose-headings:font-semibold prose-table:text-xs prose-th:text-slate-300 prose-td:text-slate-400">
-                    {renderMarkdown(report.content)}
-                  </article>
+                  <div className="p-5">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => <h1 className="mt-5 mb-3 text-lg font-bold text-emerald-200">{children}</h1>,
+                        h2: ({ children }) => <h2 className="mt-5 mb-2 text-sm font-bold text-emerald-200 border-b border-slate-800 pb-1">{children}</h2>,
+                        h3: ({ children }) => <h3 className="mt-4 mb-1.5 text-[13px] font-semibold text-slate-100">{children}</h3>,
+                        h4: ({ children }) => <h4 className="mt-3 mb-1 text-[12px] font-semibold text-slate-200">{children}</h4>,
+                        p: ({ children }) => <p className="my-2 text-[13px] leading-relaxed text-slate-300">{children}</p>,
+                        strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
+                        em: ({ children }) => <em className="italic text-slate-400">{children}</em>,
+                        ul: ({ children }) => <ul className="my-2 ml-5 list-disc space-y-1">{children}</ul>,
+                        ol: ({ children }) => <ol className="my-2 ml-5 list-decimal space-y-1">{children}</ol>,
+                        li: ({ children }) => <li className="text-[13px] text-slate-300">{children}</li>,
+                        hr: () => <hr className="my-4 border-slate-800" />,
+                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300">{children}</a>,
+                        table: ({ children }) => <table className="my-3 w-full border-collapse text-xs">{children}</table>,
+                        thead: ({ children }) => <thead className="bg-slate-800/40">{children}</thead>,
+                        th: ({ children }) => <th className="border border-slate-700 px-2 py-1 text-left font-semibold text-slate-200">{children}</th>,
+                        td: ({ children }) => <td className="border border-slate-800 px-2 py-1 text-slate-400">{children}</td>,
+                        blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-emerald-500/40 pl-3 italic text-slate-400">{children}</blockquote>,
+                        code: ({ children }) => <code className="rounded bg-slate-800/60 px-1 py-0.5 font-mono text-[11px] text-emerald-300">{children}</code>,
+                        pre: ({ children }) => <pre className="my-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 overflow-x-auto">{children}</pre>,
+                      }}
+                    >
+                      {stripCodeFences(report.content)}
+                    </ReactMarkdown>
+                  </div>
                 </ScrollArea>
               </Card>
             )}
@@ -486,96 +513,40 @@ ${renderMarkdownToHtml(report.content)}
   );
 }
 
-// Simple markdown renderer (headings, tables, lists, bold, paragraphs)
-function renderMarkdown(content: string) {
-  // Split into blocks: collect consecutive table lines into table blocks
-  const lines = content.split("\n");
-  const blocks: React.ReactNode[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    // Table block
-    if (line.startsWith("| ")) {
-      const tableLines: string[] = [];
-      while (i < lines.length && lines[i].startsWith("| ")) {
-        tableLines.push(lines[i]);
-        i++;
-      }
-      blocks.push(renderTable(tableLines, blocks.length));
-      continue;
-    }
-    // Heading
-    const h = line.match(/^(#{1,4})\s+(.*)/);
-    if (h) {
-      const level = h[1].length;
-      const text = h[2];
-      const cls = level === 1 ? "mt-4 mb-2 text-base text-emerald-200" : level === 2 ? "mt-4 mb-2 text-sm text-emerald-200 border-b border-slate-800 pb-1" : "mt-3 mb-1 text-[13px] text-slate-200";
-      blocks.push(<h4 key={blocks.length} className={cls}>{text}</h4>);
-      i++;
-      continue;
-    }
-    if (line.trim() === "") { blocks.push(<div key={blocks.length} className="h-2" />); i++; continue; }
-    if (/^\s*[-*]\s/.test(line)) {
-      blocks.push(<li key={blocks.length} className="ml-4 text-slate-300">{line.replace(/^\s*[-*]\s/, "").replace(/\*\*(.+?)\*\*/g, "$1")}</li>);
-      i++;
-      continue;
-    }
-    if (line.startsWith("---")) { blocks.push(<hr key={blocks.length} className="border-slate-800 my-4" />); i++; continue; }
-    const bolded = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    blocks.push(<p key={blocks.length} className="text-slate-300" dangerouslySetInnerHTML={{ __html: bolded }} />);
-    i++;
-  }
-  return blocks;
-}
-
-function renderTable(lines: string[], key: number) {
-  const rows = lines.map((line) => {
-    const cells = line.split("|").slice(1, -1).map((c) => c.trim());
-    return cells;
-  });
-  if (rows.length === 0) return null;
-  const isHeaderSep = (row: string[]) => row.every((c) => /^[-:]+$/.test(c));
-  const hasHeader = rows.length > 1 && !isHeaderSep(rows[0]) && isHeaderSep(rows[1]);
-  const headerRow = hasHeader ? rows[0] : null;
-  const bodyRows = hasHeader ? rows.slice(2) : rows.filter((r) => !isHeaderSep(r));
-  return (
-    <table key={key} className="my-2 w-full border-collapse text-xs">
-      {headerRow && (
-        <thead>
-          <tr>{headerRow.map((c, i) => <th key={i} className="border border-slate-700 bg-slate-800/40 px-2 py-1 text-left text-slate-300">{c}</th>)}</tr>
-        </thead>
-      )}
-      <tbody>
-        {bodyRows.map((row, ri) => (
-          <tr key={ri}>
-            {row.map((c, ci) => <td key={ci} className="border border-slate-800 px-2 py-1 text-slate-400">{c}</td>)}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+// Strip ```markdown ... ``` code fences that the LLM may wrap around the output
+function stripCodeFences(content: string): string {
+  let cleaned = content.trim();
+  // Remove leading ```markdown or ```md or ```
+  cleaned = cleaned.replace(/^```(?:markdown|md)?\s*\n/i, "");
+  // Remove trailing ```
+  cleaned = cleaned.replace(/\n```\s*$/i, "");
+  return cleaned.trim();
 }
 
 function renderMarkdownToHtml(content: string): string {
-  // Convert markdown to simple HTML for the print window
-  let html = content
+  // Simple markdown-to-HTML for the print window (no react-markdown available there)
+  const cleaned = stripCodeFences(content);
+  let html = cleaned
+    .replace(/^#### (.+)/gm, "<h4>$1</h4>")
     .replace(/^### (.+)/gm, "<h3>$1</h3>")
     .replace(/^## (.+)/gm, "<h2>$1</h2>")
     .replace(/^# (.+)/gm, "<h1>$1</h1>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
     .replace(/^---$/gm, "<hr>")
     .replace(/^\s*[-*]\s(.+)/gm, "<li>$1</li>")
-    .replace(/(<li>[\s\S]*<\/li>)/, "<ul>$1</ul>");
+    .replace(/(<li>[\s\S]*?<\/li>)(?=\n\n|\n##|\n#|\Z)/g, "<ul>$1</ul>");
 
   // Convert tables
-  const tableLines = content.split("\n").filter((l) => l.startsWith("| "));
+  const tableLines = cleaned.split("\n").filter((l) => l.startsWith("| "));
   if (tableLines.length > 0) {
     html = html.replace(/^\|(.+)\|$/gm, (match) => {
       const cells = match.split("|").filter((c) => c.trim());
       const tds = cells.map((c) => `<td>${c.trim()}</td>`).join("");
       return `<tr>${tds}</tr>`;
     });
-    html = html.replace(/(<tr>[\s\S]*<\/tr>)/, "<table>$1</table>");
+    html = html.replace(/(<tr>[\s\S]*?<\/tr>)(?=\n\n|\n##|\n#|\Z)/g, "<table>$1</table>");
   }
 
   return html;

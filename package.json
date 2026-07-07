@@ -72,6 +72,8 @@
     "react-simple-maps": "^3.0.0",
     "react-syntax-highlighter": "^15.6.1",
     "recharts": "^2.15.4",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1",
     "sharp": "^0.34.3",
     "socket.io-client": "^4.8.3",
     "socks-proxy-agent": "^10.1.0",
