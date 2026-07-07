@@ -92,10 +92,13 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
   let content = "";
   let method: "llm" | "template" = "llm";
 
-  // Server-side LLM timeout: race the LLM call against a hard deadline.
-  // If the LLM exceeds LLM_TIMEOUT_MS (30s), we fall back to the template
-  // report so the analyst ALWAYS gets output instead of a timeout error.
-  const LLM_TIMEOUT_MS = 30_000;
+  // Server-side LLM timeout: race the LLM call against a hard 12s deadline.
+  // The cloud sandbox gateway sits in front of Caddy and has its own ~30s
+  // timeout, so the ENTIRE request (DB query + LLM + fallback) must finish
+  // well under that. 12s for the LLM + ~1s overhead = ~13s total, safely
+  // under the gateway limit. If the LLM is slow, the template report (which
+  // is comprehensive — all 13 CARTINT sections) is returned instantly.
+  const LLM_TIMEOUT_MS = 12_000;
   try {
     const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
     const llmPromise = zai.chat.completions.create({

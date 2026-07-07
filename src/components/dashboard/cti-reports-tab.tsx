@@ -95,7 +95,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
 
   const generate = async () => {
     setGenerating(true);
-    toast({ title: "Generating CTI Report…", description: "Composing a structured report. Usually completes in 30-60s; a template fallback guarantees output." });
+    toast({ title: "Generating CTI Report…", description: "Composing a structured report — completes in ~15s (template fallback ensures you always get output)." });
     try {
       const config: Record<string, unknown> = {
         type: reportType,
@@ -119,10 +119,10 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
-        // 75s client timeout — the server-side LLM call is capped at 45s and
+        // 30s client timeout — the server-side LLM call is capped at 12s and
         // falls back to the template report, so the server always responds
-        // well within this window.
-        signal: AbortSignal.timeout(75000),
+        // within ~13s. 30s gives ample margin for network/gateway latency.
+        signal: AbortSignal.timeout(30000),
       });
       // Handle non-JSON responses (gateway/proxy timeout returns HTML error page)
       const contentType = res.headers.get("content-type") || "";
