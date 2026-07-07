@@ -9,8 +9,6 @@ import {
   Activity,
   Skull,
   Globe,
-  Github,
-  ExternalLink,
   Loader2,
   Filter,
   Sparkles,
@@ -37,7 +35,6 @@ import { AtmMatrixView } from "@/components/dashboard/atm-matrix-view";
 import { CtiReportsTab } from "@/components/dashboard/cti-reports-tab";
 import { ThreatFeed, ThreatDetailDialog } from "@/components/dashboard/threat-feed";
 import { AuditPanel } from "@/components/dashboard/audit-panel";
-import { ReportGenerator } from "@/components/dashboard/report-generator";
 import { ActorSpotlight } from "@/components/dashboard/actor-spotlight";
 import { ScrapeHistoryChart } from "@/components/dashboard/scrape-history-chart";
 import { SeverityDonut } from "@/components/dashboard/severity-donut";
@@ -46,7 +43,7 @@ import { WorldMap } from "@/components/dashboard/world-map";
 import { ScrapeSchedulePanel } from "@/components/dashboard/scrape-schedule-panel";
 import { SystemStatusPanel } from "@/components/dashboard/system-status-panel";
 import { ActorCompareDialog } from "@/components/dashboard/actor-compare-dialog";
-import type { Stats, SourceInfo, AtmTacticData, Threat, Report } from "@/components/dashboard/types";
+import type { Stats, SourceInfo, AtmTacticData, Threat } from "@/components/dashboard/types";
 
 const PAGE_SIZE = 12;
 
@@ -57,7 +54,6 @@ export default function Home() {
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [atm, setAtm] = useState<{ tactics: AtmTacticData[]; maxCount: number }>({ tactics: [], maxCount: 1 });
   const [filters, setFilters] = useState<{ sources: string[]; categories: string[]; tactics: string[]; countries: string[]; actors: string[] }>({ sources: [], categories: [], tactics: [], countries: [], actors: [] });
-  const [reports, setReports] = useState<Report[]>([]);
 
   const [threats, setThreats] = useState<Threat[]>([]);
   const [threatsTotal, setThreatsTotal] = useState(0);
@@ -92,18 +88,16 @@ export default function Home() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const loadOverview = useCallback(async () => {
-    const [s, src, a, f, r] = await Promise.all([
+    const [s, src, a, f] = await Promise.all([
       fetch(`/api/stats?trendDays=${trendDays}`).then((r) => r.json()),
       fetch("/api/sources").then((r) => r.json()),
       fetch("/api/atm").then((r) => r.json()),
       fetch("/api/filters").then((r) => r.json()),
-      fetch("/api/reports").then((r) => r.json()),
     ]);
     setStats(s);
     setSources(src.sources);
     setAtm(a);
     setFilters(f);
-    setReports(r.reports);
     setLastUpdated(new Date());
     setLoading(false);
   }, [trendDays]);
@@ -441,7 +435,7 @@ export default function Home() {
             countries={filters.countries}
           />
         ) : (
-        <>
+        <div className="space-y-4">
         {/* Hero / mission banner */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -573,12 +567,11 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Audit + Reports */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Audit (CTI Report Generator moved to the CTI Reports tab) */}
+        <div className="grid grid-cols-1 gap-4">
           <AuditPanel stats={stats} />
-          <ReportGenerator reports={reports} onRefresh={loadOverview} />
         </div>
-        </>
+        </div>
         )}
       </main>
 
@@ -593,16 +586,6 @@ export default function Home() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <a
-              href="https://github.com/reuelmagistrado/cartint-dashboard"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 transition-colors hover:text-slate-300"
-            >
-              <Github className="h-3.5 w-3.5" /> cartint-dashboard
-              <ExternalLink className="h-3 w-3" />
-            </a>
-            <span className="text-slate-600">·</span>
             <span>Dark-web OSINT · LLM-classified · Auto-ISAC ATM</span>
           </div>
         </div>
