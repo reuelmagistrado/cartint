@@ -9,7 +9,7 @@
 - **AI-generated CTI reports** — 6 report types (Weekly Digest, Threat Actor Profile, Incident Report, Campaign Analysis, Sector Assessment, Ad-Hoc) with streaming generation
 - **Auto-ISAC ATM mapping** — all threats mapped to 14 tactics / 77 techniques
 - **Real-time dashboard** — live threat feed, severity distribution, geographic map, actor spotlight, trending ATM tactics
-- **Tor dark-web scraping** — Robin-style 6-engine .onion search + RansomLook leak-site monitoring
+- **Tor dark-web scraping** — 6-engine .onion search + RansomLook leak-site monitoring
 - **Scheduled scrapes** — configurable per-source intervals with watchdog health monitoring
 
 ## Quick Start
@@ -240,7 +240,7 @@ All configuration is via environment variables (`.env` file) or the in-app Setti
 
 | Source | Type | Needs Tor? | Description |
 |--------|------|-----------|-------------|
-| `darkweb` | Dark-web | Optional | RansomLook leak monitoring (clearnet) + Robin-style Tor search |
+| `darkweb` | Dark-web | Optional | RansomLook leak monitoring (clearnet) + Tor-based .onion search |
 | `bleepingcomputer` | Security RSS | No | Dark-web breach reporting |
 | `thehackernews` | Security RSS | No | Threat-actor activity news |
 | `nvd-cve` | CVE | No | NIST NVD automotive CVEs |
@@ -311,5 +311,4 @@ Contributions welcome! Please open an issue or submit a pull request.
 
 - [Auto-ISAC](https://auto-isac.com/) — Automotive Threat Matrix (ATM)
 - [RansomLook](https://www.ransomlook.io/) — Ransomware leak-site monitoring API
-- [Robin](https://github.com/) — Dark-web search methodology inspiration
 - [Z.AI](https://z.ai) — Default AI provider
