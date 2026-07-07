@@ -16,7 +16,7 @@
 //   - Confidence assessment
 //   - Analytical notes (what's known, inferred, unknown)
 
-import ZAI from "z-ai-web-dev-sdk";
+import { chatCompletionText } from "@/lib/ai-provider";
 import { ATM_TACTICS } from "@/lib/atm";
 import { db } from "@/lib/db";
 
@@ -163,18 +163,10 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the JSON):
   "mappingComplete": true
 }`;
 
-let zaiPromise: Promise<unknown> | null = null;
-async function getZai() {
-  if (!zaiPromise) zaiPromise = ZAI.create();
-  return zaiPromise;
-}
-
 // Map a single threat to the ATM using the full 5-step methodology.
 export async function mapThreatToAtm(threatId: string): Promise<AtmMappingResult> {
   const threat = await db.threat.findUnique({ where: { id: threatId } });
   if (!threat) throw new Error("Threat not found");
-
-  const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
 
   const incidentDetails = JSON.stringify({
     title: threat.title,
@@ -194,7 +186,7 @@ export async function mapThreatToAtm(threatId: string): Promise<AtmMappingResult
     classificationReason: threat.classificationReason,
   }, null, 2);
 
-  const completion = await zai.chat.completions.create({
+  const raw = await chatCompletionText({
     messages: [
       { role: "assistant", content: MAPPING_SYSTEM_PROMPT },
       {
@@ -204,8 +196,6 @@ export async function mapThreatToAtm(threatId: string): Promise<AtmMappingResult
     ],
     thinking: { type: "disabled" },
   });
-
-  const raw = completion.choices[0]?.message?.content ?? "{}";
   const match = raw.match(/\{[\s\S]*\}/);
   const parsed = match ? JSON.parse(match[0]) : JSON.parse(raw);
 

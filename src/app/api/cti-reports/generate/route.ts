@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import ZAI from "z-ai-web-dev-sdk";
+import { chatCompletion } from "@/lib/ai-provider";
 import {
   type ReportConfig,
   type GeneratedReport,
@@ -124,8 +124,7 @@ async function generateReportInBackground(
   let method: "llm" | "template" = "llm";
 
   try {
-    const zai = await ZAI.create();
-    const result = await zai.chat.completions.create({
+    const result = await chatCompletion({
       messages: [
         { role: "assistant", content: prompt.systemPrompt },
         { role: "user", content: prompt.userPrompt },
@@ -135,8 +134,8 @@ async function generateReportInBackground(
       max_tokens: 8192,
     });
 
-    if (result instanceof ReadableStream) {
-      const reader = result.getReader();
+    if (result.stream) {
+      const reader = result.stream.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let lastProgressUpdate = 0;
@@ -184,8 +183,8 @@ async function generateReportInBackground(
       }
       try { reader.releaseLock(); } catch { /* ignore */ }
     } else {
-      const json = result as { choices?: { message?: { content?: string } }[] };
-      content = json.choices?.[0]?.message?.content ?? "";
+      // Non-streaming response — content is in result.content
+      content = result.content ?? "";
     }
 
     // If the AI produced content, complete the job

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import ZAI from "z-ai-web-dev-sdk";
+import { chatCompletionText } from "@/lib/ai-provider";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
 import { seedIfEmpty } from "@/lib/scraper/seed";
@@ -79,8 +79,7 @@ export async function GET(
 
   let iocs: IOCs;
   try {
-    const zai = await ZAI.create();
-    const completion = await zai.chat.completions.create({
+    const raw = await chatCompletionText({
       messages: [
         {
           role: "assistant",
@@ -94,7 +93,6 @@ export async function GET(
       ],
       thinking: { type: "disabled" },
     });
-    const raw = completion.choices[0]?.message?.content ?? "{}";
     const match = raw.match(/\{[\s\S]*\}/);
     const parsed = match ? JSON.parse(match[0]) : JSON.parse(raw);
     iocs = {

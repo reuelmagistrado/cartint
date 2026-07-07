@@ -12,7 +12,7 @@
 // CARTINT CTI Report Template, falling back to a template generator on
 // content-filter errors.
 
-import ZAI from "z-ai-web-dev-sdk";
+import { chatCompletion } from "@/lib/ai-provider";
 import { db } from "@/lib/db";
 import { RELEVANCE_THRESHOLD } from "@/lib/scraper";
 import { isContentFilterError } from "@/lib/scraper/heuristic";
@@ -72,12 +72,6 @@ export const REPORT_TYPE_META: Record<ReportType, { title: string; defaultDays: 
   "ad-hoc": { title: "Ad-Hoc Report", defaultDays: 30 },
 };
 
-let zaiPromise: Promise<unknown> | null = null;
-async function getZai() {
-  if (!zaiPromise) zaiPromise = ZAI.create();
-  return zaiPromise;
-}
-
 export async function generateCtiReport(config: ReportConfig): Promise<GeneratedReport> {
   const meta = REPORT_TYPE_META[config.type];
   const days = config.timeRangeDays || meta.defaultDays;
@@ -100,8 +94,7 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
   // is comprehensive — all 13 CARTINT sections) is returned instantly.
   const AI_TIMEOUT_MS = 12_000;
   try {
-    const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
-    const llmPromise = zai.chat.completions.create({
+    const llmPromise = chatCompletion({
       messages: [
         { role: "assistant", content: prompt.systemPrompt },
         { role: "user", content: prompt.userPrompt },
@@ -111,10 +104,10 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("AI_TIMEOUT")), AI_TIMEOUT_MS),
     );
-    const completion = (await Promise.race([llmPromise, timeoutPromise])) as {
-      choices?: { message?: { content?: string } }[];
+    const result = (await Promise.race([llmPromise, timeoutPromise])) as {
+      content: string;
     };
-    content = completion.choices?.[0]?.message?.content ?? "";
+    content = result.content ?? "";
     if (!content.trim()) {
       // Empty AI output — fall back to template so we never return a blank report.
       content = buildTemplateReport(config, threats, days);

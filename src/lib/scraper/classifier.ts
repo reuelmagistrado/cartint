@@ -2,7 +2,7 @@
 // This is the FALSE-POSITIVE GATE: every scraped item is classified by the AI
 // as automotive-relevant or not, with a confidence score. Only items that are
 // automotive AND above the configured threshold are surfaced as real threats.
-import ZAI from "z-ai-web-dev-sdk";
+import { chatCompletionText } from "@/lib/ai-provider";
 import { ATM_TACTICS } from "@/lib/atm";
 import { isContentFilterError, heuristicClassifyBatch } from "./heuristic";
 
@@ -105,13 +105,7 @@ Return ONLY a JSON array. One object per input item, in the same order. Schema:
   "dataTypes": string | null (comma-separated)
 }`;
 
-let zaiPromise: Promise<unknown> | null = null;
-async function getZai() {
-  if (!zaiPromise) {
-    zaiPromise = ZAI.create();
-  }
-  return zaiPromise;
-}
+// (getZai helper removed — all AI calls now go through @/lib/ai-provider)
 
 // Minimal deterministic pre-filter to avoid wasting AI calls on obvious noise.
 const HARD_BLOCK = [
@@ -191,7 +185,6 @@ export async function classifyBatch(items: RawItem[]): Promise<Classification[]>
 }
 
 async function llmClassify(chunk: RawItem[]): Promise<Classification[]> {
-  const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
   const userContent = chunk
     .map((c, idx) => `--- ITEM ${idx + 1} ---\n${JSON.stringify({
       externalId: c.externalId,
@@ -208,7 +201,7 @@ async function llmClassify(chunk: RawItem[]): Promise<Classification[]> {
     })}`)
     .join("\n\n");
 
-  const completion = await zai.chat.completions.create({
+  const raw = await chatCompletionText({
     messages: [
       { role: "assistant", content: SYSTEM_PROMPT },
       { role: "user", content: `Classify each item below. Return a JSON array of exactly ${chunk.length} objects.\n\n${userContent}` },
@@ -216,7 +209,6 @@ async function llmClassify(chunk: RawItem[]): Promise<Classification[]> {
     thinking: { type: "disabled" },
   });
 
-  const raw = completion.choices[0]?.message?.content ?? "[]";
   const match = raw.match(/\[[\s\S]*\]/);
   const parsed = match ? JSON.parse(match[0]) : JSON.parse(raw);
   if (!Array.isArray(parsed)) return [];

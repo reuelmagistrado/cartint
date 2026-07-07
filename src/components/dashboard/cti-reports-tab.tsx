@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { AiSettingsPanel } from "./ai-settings-panel";
 import {
   FileText, Loader2, FileDown, Printer, Settings2,
   Calendar, AlertTriangle, Shield, Globe, Users, Target,
@@ -526,6 +527,9 @@ ${renderMarkdownToHtml(report.content)}
               </div>
             </Card>
       </motion.div>
+
+      {/* AI Provider Settings — lets the user choose their AI provider */}
+      <AiSettingsPanel />
 
       {/* Report viewer modal — overlays the footer (z-50) instead of
           competing with it inline. The form stays available underneath so

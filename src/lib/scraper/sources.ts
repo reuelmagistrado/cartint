@@ -61,11 +61,22 @@ async function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = 15000)
 }
 
 async function readPage(url: string): Promise<string> {
-  const ZAI = (await import("z-ai-web-dev-sdk")).default;
-  const zai = await ZAI.create();
-  const result = await zai.functions.invoke("page_reader", { url });
-  const data = (result as { data?: { html?: string; text?: string } })?.data ?? (result as { html?: string; text?: string });
-  return data?.html || data?.text || "";
+  // Use standard fetch to read web pages — this works with any AI provider
+  // (the old z-ai page_reader was Z.AI-specific and wouldn't work with
+  // OpenAI/Anthropic/Gemini/Ollama).
+  try {
+    const res = await fetchWithTimeout(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; CARTINT-OSINT/1.0)",
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
+    if (!res.ok) return "";
+    const html = await res.text();
+    return stripHtml(html);
+  } catch {
+    return "";
+  }
 }
 
 function stripHtml(html: string): string {

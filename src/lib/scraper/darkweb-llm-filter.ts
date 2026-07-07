@@ -12,7 +12,7 @@
 // support (OpenAI/Anthropic/Gemini/Ollama), users can set the corresponding
 // env vars and the filter will use the configured provider.
 
-import ZAI from "z-ai-web-dev-sdk";
+import { chatCompletionText } from "@/lib/ai-provider";
 import type { SearchResult } from "./darkweb-search";
 
 export type ClassificationResult = {
@@ -27,12 +27,6 @@ export type ClassificationResult = {
   reasoning: string;
 };
 
-let zaiPromise: Promise<unknown> | null = null;
-async function getZai() {
-  if (!zaiPromise) zaiPromise = ZAI.create();
-  return zaiPromise;
-}
-
 // ─── Step 1: Query Refinement ──────────────────────────────────────────────
 // Robin's system prompt: "You are a Cybercrime Threat Intelligence Expert.
 // Refine the provided user query for dark web search engines. Don't use
@@ -40,19 +34,19 @@ async function getZai() {
 
 export async function refineQuery(userQuery: string): Promise<string> {
   try {
-    const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
-    const completion = await zai.chat.completions.create({
-      messages: [
-        {
-          role: "assistant",
-          content:
-            "You are a Cybercrime Threat Intelligence Expert. Refine the provided user query for dark web search engines. Don't use logical operators. Keep to 5 words or less. Output just the query.",
-        },
-        { role: "user", content: userQuery },
-      ],
-      thinking: { type: "disabled" },
-    });
-    const refined = (completion.choices[0]?.message?.content ?? "").trim();
+    const refined = (
+      await chatCompletionText({
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "You are a Cybercrime Threat Intelligence Expert. Refine the provided user query for dark web search engines. Don't use logical operators. Keep to 5 words or less. Output just the query.",
+          },
+          { role: "user", content: userQuery },
+        ],
+        thinking: { type: "disabled" },
+      })
+    ).trim();
     return refined || userQuery;
   } catch {
     return userQuery;
@@ -70,7 +64,6 @@ export async function filterResults(
   if (results.length <= maxResults) return results;
 
   try {
-    const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
     // Truncate links at .onion (Robin's approach) and clean titles
     const cleaned = results.map((r, i) => ({
       index: i,
@@ -78,7 +71,7 @@ export async function filterResults(
       link: r.link.split(".onion")[0] + ".onion",
     }));
 
-    const completion = await zai.chat.completions.create({
+    const raw = await chatCompletionText({
       messages: [
         {
           role: "assistant",
@@ -89,7 +82,7 @@ export async function filterResults(
       thinking: { type: "disabled" },
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "[]";
+    const rawStr = raw || "[]";
     const match = raw.match(/\[[\s\S]*\]/);
     const indices: number[] = match ? JSON.parse(match[0]) : [];
     return indices
@@ -143,8 +136,7 @@ export async function classifyDarkwebContent(
   content: string,
 ): Promise<ClassificationResult | null> {
   try {
-    const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
-    const completion = await zai.chat.completions.create({
+    const raw = await chatCompletionText({
       messages: [
         { role: "assistant", content: CLASSIFICATION_SYSTEM_PROMPT },
         { role: "user", content: `URL: ${url}\n\nContent:\n${content}` },
@@ -152,7 +144,6 @@ export async function classifyDarkwebContent(
       thinking: { type: "disabled" },
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
     const match = raw.match(/\{[\s\S]*\}/);
     const parsed = match ? JSON.parse(match[0]) : JSON.parse(raw);
     return normalizeClassification(parsed);

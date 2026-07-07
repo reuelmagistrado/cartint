@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import ZAI from "z-ai-web-dev-sdk";
+import { chatCompletionText } from "@/lib/ai-provider";
 import { db } from "@/lib/db";
 import { RELEVANCE_THRESHOLD, ensureSourcesSeeded } from "@/lib/scraper";
 import { seedIfEmpty } from "@/lib/scraper/seed";
@@ -180,8 +180,7 @@ export async function POST(req: NextRequest) {
         score: t.relevanceScore,
       }));
 
-      const zai = await ZAI.create();
-      const completion = await zai.chat.completions.create({
+      const rawContent = await chatCompletionText({
         messages: [
           {
             role: "assistant",
@@ -195,7 +194,7 @@ export async function POST(req: NextRequest) {
         ],
         thinking: { type: "disabled" },
       });
-      content = completion.choices[0]?.message?.content ?? "";
+      content = rawContent;
       const summaryMatch = content.match(/Executive Summary[\s\S]*?(?:\n#{1,3}|\n\n)/);
       summary = summaryMatch ? summaryMatch[0].replace(/^.*?\n/, "").trim().slice(0, 400) : content.slice(0, 400);
     } catch (llmErr) {

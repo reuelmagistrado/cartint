@@ -1082,3 +1082,79 @@ Work Log:
 
 Stage Summary:
 - Report generation is now 100% reliable — no more partial reports or stream interruptions. The streaming approach was replaced with an async job pattern: POST starts generation (returns immediately), GET polls status (fast, no gateway timeout), GET fetches the complete result. The LLM runs server-side where the connection is stable, and the browser only makes short polling requests. Verified: all 13 sections present, "LLM" badge, no error toasts, job completes in ~50s. The "Report partially generated" error is permanently resolved.
+
+---
+Task ID: 42 (multi-model AI provider + open-source setup)
+Agent: main (Z.ai Code)
+Task: Make the project work on a local clone with multi-model AI support. Create README, setup script, .env.example, AI Settings UI, and graceful degradation documentation.
+
+Work Log:
+- **1. Created unified AI provider layer** (`src/lib/ai-provider.ts`):
+  - Supports 5 providers: Z.AI (default), OpenAI, Anthropic Claude, Google Gemini, Ollama (local/free)
+  - `chatCompletion()` and `chatCompletionText()` — single entry points all CARTINT code uses
+  - Z.AI caller lazily imports `z-ai-web-dev-sdk` (only loaded when actually used)
+  - OpenAI/Anthropic/Google/Ollama use the OpenAI-compatible `/chat/completions` endpoint (all four expose this)
+  - Settings stored in memory, overridable at runtime via `/api/ai-settings`
+  - `isAIConfigured()` — checks if a provider is properly configured
+  - `PROVIDER_DEFAULTS` — per-provider default baseUrl, model, label, helpUrl
+
+- **2. Refactored ALL 7 AI call sites** to use `chatCompletionText`/`chatCompletion` instead of `zai.chat.completions.create`:
+  - `src/lib/scraper/classifier.ts` — threat classification
+  - `src/lib/scraper/darkweb-llm-filter.ts` — 3 calls (query refinement, result filtering, content classification)
+  - `src/lib/scraper/atm-mapper.ts` — ATM mapping
+  - `src/lib/scraper/sources.ts` — page reader (replaced Z.AI-specific `page_reader` with standard `fetch` + `stripHtml`)
+  - `src/lib/cti-report-generator.ts` — CTI report generation
+  - `src/app/api/cti-reports/generate/route.ts` — streaming report generation
+  - `src/app/api/threats/[id]/iocs/route.ts` — IOC extraction
+  - `src/app/api/reports/route.ts` — legacy report generation
+  - All `import ZAI from "z-ai-web-dev-sdk"` removed (except in ai-provider.ts where it's the Z.AI caller)
+  - All `zaiPromise`/`getZai()` helpers removed
+
+- **3. Created AI Settings API** (`src/app/api/ai-settings/route.ts`):
+  - GET — returns current provider config (API key masked for security)
+  - POST — updates provider at runtime (no restart needed)
+
+- **4. Created AI Settings UI** (`src/components/dashboard/ai-settings-panel.tsx`):
+  - Provider dropdown (Z.AI, OpenAI, Anthropic, Google, Ollama)
+  - API key input (password field, shows "set" status)
+  - Base URL + Model inputs (for non-Z.AI providers)
+  - "Get an API key" link per provider
+  - Z.AI config instructions (`.z-ai-config` file format)
+  - "Configured" / "Not configured" badge
+  - Warning banner when AI isn't configured
+  - Added to the CTI Reports tab below the report form
+
+- **5. Created setup script** (`setup.sh` → `bun run setup`):
+  - Checks Bun is installed
+  - Installs npm dependencies
+  - Creates SQLite database + pushes Prisma schema
+  - Checks AI provider config (.z-ai-config, env vars)
+  - Checks Tor installation (optional)
+  - Prints next steps with colored output
+  - Added `"setup": "bash setup.sh"` to package.json
+
+- **6. Created comprehensive README.md**:
+  - Quick start (3 steps)
+  - AI provider configuration (6 options: Z.AI, OpenAI, Anthropic, Google, Ollama, in-app UI)
+  - What works without AI (graceful degradation table)
+  - Tor setup (macOS, Linux, Windows)
+  - Full configuration reference (all env vars)
+  - Architecture diagram
+  - Sources table
+  - AI features list
+  - Graceful degradation explanation
+  - Development instructions
+  - Tech stack
+
+- **7. Created `.env.example`** with all config vars documented (AI_PROVIDER, AI_API_KEY, AI_BASE_URL, AI_MODEL, Tor, RansomLook, scraper settings)
+
+- **Verification:**
+  * `GET /api/ai-settings` returns `{ provider: "zai", configured: true, defaults: {5 providers} }`
+  * `POST /api/ai-settings` with `{provider:"ollama"}` → `{ ok: true, provider: "ollama", configured: true, message: "AI provider set to Ollama (local, free)" }`
+  * Provider switch verified (GET after POST shows the new provider)
+  * `bun run setup` runs successfully — checks Bun, installs deps, pushes DB, detects Z.AI config, warns about Tor
+  * AI Settings panel renders in the CTI Reports tab with "Configured" badge, provider dropdown, API key input
+  * `bun run lint` clean; `tsc --noEmit` clean; no runtime errors
+
+Stage Summary:
+- CARTINT is now open-source-ready with multi-model AI support. Users can choose from 5 AI providers (Z.AI, OpenAI, Anthropic, Google, Ollama) via environment variables or the in-app Settings UI — no code changes needed. All AI features (classification, report generation, IOC extraction, dark-web filtering, ATM mapping) work with any provider. The app gracefully degrades to heuristic/template fallbacks when AI isn't configured. The `bun run setup` script guides users through installation, and the README.md documents everything (AI config, Tor setup, env vars, architecture). The project works on a fresh `git clone` — `bun run setup && bun run dev` gets you a fully functional dashboard.
