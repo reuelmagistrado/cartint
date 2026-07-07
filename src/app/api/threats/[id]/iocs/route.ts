@@ -17,7 +17,7 @@ export type IOCs = {
   method: "llm" | "regex-fallback" | "none";
 };
 
-// Regex-based IOC extraction fallback — used when the LLM hits the content
+// Regex-based IOC extraction fallback — used when the AI hits the content
 // filter or fails. Extracts deterministic patterns from the threat text.
 function regexExtract(text: string): IOCs {
   const cves = [...new Set((text.match(/CVE-\d{4}-\d{4,7}/gi) ?? []).map((s) => s.toUpperCase()))];
@@ -49,7 +49,7 @@ function regexExtract(text: string): IOCs {
 }
 
 // GET /api/threats/[id]/iocs — extract Indicators of Compromise from a threat.
-// Tries the LLM first; falls back to regex extraction on content-filter errors.
+// Tries the AI first; falls back to regex extraction on content-filter errors.
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -106,7 +106,7 @@ export async function GET(
       misc: dedupStrings(parsed.misc).slice(0, 10),
       method: "llm",
     };
-    // Merge in regex results so we never miss a CVE the LLM overlooked.
+    // Merge in regex results so we never miss a CVE the AI overlooked.
     const regex = regexExtract(text);
     iocs.cves = dedupStrings([...iocs.cves, ...regex.cves]);
     iocs.misc = dedupStrings([...iocs.misc, ...regex.misc]).slice(0, 10);

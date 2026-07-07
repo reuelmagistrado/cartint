@@ -18,7 +18,7 @@ import {
 import type { SourceInfo } from "./types";
 import { sourceTypeMeta, timeAgo } from "./types";
 
-// Estimated scrape duration by source type (LLM classification is the bottleneck).
+// Estimated scrape duration by source type (AI classification is the bottleneck).
 const ESTIMATED_DURATION: Record<string, string> = {
   "ransomware-api": "30–90s",
   "darkweb-search": "20–60s",
@@ -145,7 +145,7 @@ export function SourcesPanel({
               Scrape {confirmSource?.name}?
             </DialogTitle>
             <DialogDescription className="text-[11px] text-slate-400">
-              This will fetch from the source and run the LLM automotive-relevance classifier on every item.
+              This will fetch from the source and run the AI automotive-relevance classifier on every item.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 p-5">
@@ -177,7 +177,7 @@ export function SourcesPanel({
                   </div>
                 </div>
                 <p className="rounded bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-300">
-                  New threats are LLM-classified to eliminate false positives (≥70 confidence + automotive). The feed auto-refreshes on completion.
+                  New threats are AI-classified to eliminate false positives (≥70 confidence + automotive). The feed auto-refreshes on completion.
                 </p>
               </>
             )}

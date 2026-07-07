@@ -1,6 +1,6 @@
 // AI-powered ATM mapping module — implements the Auto-ISAC ATM Mapping Methodology.
 //
-// This module performs attacker-intent-first threat incident analysis using the LLM,
+// This module performs attacker-intent-first threat incident analysis using the AI,
 // following the 5-step methodology:
 //   1. Establish the Incident Context (target, interface, attack surface, effect)
 //   2. Separate Observed Facts from Analytical Inference
@@ -8,7 +8,7 @@
 //   4. Evaluate Candidate Techniques Against the Target Environment
 //   5. Develop a Credible Adversary Behavior Mapping + test from attacker's perspective
 //
-// The LLM is given the full ATM tactic+technique taxonomy and the incident details,
+// The AI is given the full ATM tactic+technique taxonomy and the incident details,
 // then produces a structured mapping with:
 //   - Identified tactics (with reasoning)
 //   - Mapped techniques (with evidence type: observed/inferred)

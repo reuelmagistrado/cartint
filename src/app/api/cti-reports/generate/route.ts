@@ -20,7 +20,7 @@ export const maxDuration = 10; // Fast — just starts the job and returns
 // browser disconnects mid-stream on long responses), this endpoint:
 //   1. Gathers threats + builds the prompt
 //   2. Creates a job in memory
-//   3. Starts the LLM call in the background (not awaited)
+//   3. Starts the AI call in the background (not awaited)
 //   4. Immediately returns { ok: true, jobId }
 //
 // The client polls GET /api/cti-reports/status?jobId=xxx until status="complete",
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Build the LLM prompt with ALL threats (no cap)
+    // Build the AI prompt with ALL threats (no cap)
     const prompt = buildReportPrompt(config, threats, days);
 
     // Pre-compute report metadata
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     // Create the job
     const job = createJob();
 
-    // Start the LLM generation in the background (NOT awaited).
+    // Start the AI generation in the background (NOT awaited).
     // The job is updated when generation completes or fails.
     generateReportInBackground(job.id, config, prompt, reportMeta, threats, days).catch((err) => {
       console.error(`[cti-report] Background generation crashed for job ${job.id}:`, err);
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Background generation — runs the LLM call and updates the job store.
+// Background generation — runs the AI call and updates the job store.
 // Not awaited by the request handler, so the HTTP response returns immediately.
 async function generateReportInBackground(
   jobId: string,
@@ -188,7 +188,7 @@ async function generateReportInBackground(
       content = json.choices?.[0]?.message?.content ?? "";
     }
 
-    // If the LLM produced content, complete the job
+    // If the AI produced content, complete the job
     if (content.trim()) {
       const report: GeneratedReport = {
         ...(reportMeta as Omit<GeneratedReport, "content" | "summary" | "method">),
@@ -197,12 +197,12 @@ async function generateReportInBackground(
         method: "llm",
       };
       completeJob(jobId, report);
-      console.log(`[cti-report] Job ${jobId} completed — LLM, ${content.length} chars`);
+      console.log(`[cti-report] Job ${jobId} completed — AI, ${content.length} chars`);
       return;
     }
 
-    // Empty LLM output — fall back to template
-    console.warn(`[cti-report] Job ${jobId} — LLM empty, using template`);
+    // Empty AI output — fall back to template
+    console.warn(`[cti-report] Job ${jobId} — AI empty, using template`);
     content = buildTemplateReport(config, threats, days);
     method = "template";
     const templateReport: GeneratedReport = {
@@ -229,10 +229,10 @@ async function generateReportInBackground(
 
     // Other error — if we have partial content, use it; otherwise fail
     if (content.trim()) {
-      console.warn(`[cti-report] Job ${jobId} — LLM error but have partial content (${content.length} chars)`);
+      console.warn(`[cti-report] Job ${jobId} — AI error but have partial content (${content.length} chars)`);
       const partialReport: GeneratedReport = {
         ...(reportMeta as Omit<GeneratedReport, "content" | "summary" | "method">),
-        content: content + "\n\n---\n*Note: LLM generation was interrupted. Partial report shown.*",
+        content: content + "\n\n---\n*Note: AI generation was interrupted. Partial report shown.*",
         summary: content.slice(0, 400),
         method: "llm",
       };

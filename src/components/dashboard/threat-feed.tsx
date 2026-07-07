@@ -156,7 +156,7 @@ export function ThreatDetailDialog({
               </h4>
               <div className="rounded-lg border border-slate-700/60 bg-slate-900/50 p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs text-slate-400">LLM Confidence Score</span>
+                  <span className="text-xs text-slate-400">AI Confidence Score</span>
                   <div className="flex items-center gap-2">
                     <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-700">
                       <div
@@ -286,7 +286,7 @@ export function ThreatDetailDialog({
                   <Fingerprint className="h-3.5 w-3.5 text-fuchsia-400" /> Indicators of Compromise
                   {iocs && iocs.method !== "none" && (
                     <Badge variant="outline" className="h-4 border-slate-600 px-1 text-[9px] text-slate-400">
-                      {iocs.method === "llm" ? "LLM-extracted" : "regex fallback"}
+                      {iocs.method === "llm" ? "AI-extracted" : "regex fallback"}
                     </Badge>
                   )}
                 </h4>
@@ -588,7 +588,7 @@ export function ThreatFeed({
           <p className="text-[11px] text-slate-400">
             {includeRejected
               ? "Showing all scraped items incl. rejected false positives (audit mode)"
-              : "Only LLM-classified automotive threats (confidence ≥ 70%)"}
+              : "Only AI-classified automotive threats (confidence ≥ 70%)"}
           </p>
         </div>
         <div className="flex items-center gap-2">

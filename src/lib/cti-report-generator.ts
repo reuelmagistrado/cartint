@@ -8,7 +8,7 @@
 //   5. Sector Threat Assessment (30d)
 //   6. Ad-Hoc Report (custom threat selection)
 //
-// Each report is generated via LLM with a structured prompt based on the
+// Each report is generated via AI with a structured prompt based on the
 // CARTINT CTI Report Template, falling back to a template generator on
 // content-filter errors.
 
@@ -86,19 +86,19 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
   // Gather threat data based on report type
   const threats = await gatherThreats(config, since);
 
-  // Build the LLM prompt
+  // Build the AI prompt
   const prompt = buildReportPrompt(config, threats, days);
 
   let content = "";
   let method: "llm" | "template" = "llm";
 
-  // Server-side LLM timeout: race the LLM call against a hard 12s deadline.
+  // Server-side AI timeout: race the AI call against a hard 12s deadline.
   // The cloud sandbox gateway sits in front of Caddy and has its own ~30s
-  // timeout, so the ENTIRE request (DB query + LLM + fallback) must finish
-  // well under that. 12s for the LLM + ~1s overhead = ~13s total, safely
-  // under the gateway limit. If the LLM is slow, the template report (which
+  // timeout, so the ENTIRE request (DB query + AI + fallback) must finish
+  // well under that. 12s for the AI + ~1s overhead = ~13s total, safely
+  // under the gateway limit. If the AI is slow, the template report (which
   // is comprehensive — all 13 CARTINT sections) is returned instantly.
-  const LLM_TIMEOUT_MS = 12_000;
+  const AI_TIMEOUT_MS = 12_000;
   try {
     const zai = (await getZai()) as Awaited<ReturnType<typeof ZAI.create>>;
     const llmPromise = zai.chat.completions.create({
@@ -109,14 +109,14 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
       thinking: { type: "disabled" },
     });
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("LLM_TIMEOUT")), LLM_TIMEOUT_MS),
+      setTimeout(() => reject(new Error("AI_TIMEOUT")), AI_TIMEOUT_MS),
     );
     const completion = (await Promise.race([llmPromise, timeoutPromise])) as {
       choices?: { message?: { content?: string } }[];
     };
     content = completion.choices?.[0]?.message?.content ?? "";
     if (!content.trim()) {
-      // Empty LLM output — fall back to template so we never return a blank report.
+      // Empty AI output — fall back to template so we never return a blank report.
       content = buildTemplateReport(config, threats, days);
       method = "template";
     }
@@ -125,14 +125,14 @@ export async function generateCtiReport(config: ReportConfig): Promise<Generated
     // to the deterministic template report. The user always gets a usable report.
     const isTimeout =
       err instanceof Error &&
-      (err.message === "LLM_TIMEOUT" ||
+      (err.message === "AI_TIMEOUT" ||
         /timeout|abort|timed?\s*out/i.test(err.message));
     if (isTimeout || isContentFilterError(err)) {
       console.warn(
-        `[cti-report] LLM ${isTimeout ? "timed out" : "content-filtered"}, using template fallback.`,
+        `[cti-report] AI ${isTimeout ? "timed out" : "content-filtered"}, using template fallback.`,
       );
     } else {
-      console.warn("[cti-report] LLM call failed, using template fallback:", err);
+      console.warn("[cti-report] AI call failed, using template fallback:", err);
     }
     content = buildTemplateReport(config, threats, days);
     method = "template";
@@ -254,7 +254,7 @@ export async function gatherThreats(config: ReportConfig, since: Date) {
   }
 }
 
-// Build the LLM prompt for report generation
+// Build the AI prompt for report generation
 export function buildReportPrompt(config: ReportConfig, threats: any[], days: number) {
   const meta = REPORT_TYPE_META[config.type];
   const sections = config.sections || [
@@ -264,10 +264,10 @@ export function buildReportPrompt(config: ReportConfig, threats: any[], days: nu
     "Distribution", "Glossary",
   ];
 
-  // Send ALL threats to the LLM (no cap) so the analysis is accurate and
+  // Send ALL threats to the AI (no cap) so the analysis is accurate and
   // reflects the actual threat data in the selected time range. Each threat
   // is trimmed to essential fields to keep the prompt manageable (~500 bytes
-  // per threat → ~25KB for 50 threats, well within LLM context limits).
+  // per threat → ~25KB for 50 threats, well within AI context limits).
   const threatData = threats.map((t) => ({
     title: String(t.title ?? "").slice(0, 120),
     desc: String(t.description ?? "").slice(0, 200),
@@ -286,7 +286,7 @@ export function buildReportPrompt(config: ReportConfig, threats: any[], days: nu
 
   // Compact ATM reference — only tactic ID + name + technique IDs (no
   // technique names, no descriptions). The threat data already carries the
-  // mapped tactic/technique names, so the LLM doesn't need the full taxonomy.
+  // mapped tactic/technique names, so the AI doesn't need the full taxonomy.
   // This shrinks the ATM block from ~80KB to <1KB.
   const atmCompact = ATM_TACTICS.map(
     (t) => `${t.tacticId} ${t.name}: ${t.techniques.map((x) => x.id).join(", ")}`,
@@ -392,7 +392,7 @@ function getReportTypeRequirements(config: ReportConfig): string {
 }
 
 // ============================================================================
-// Template-based fallback report (no LLM)
+// Template-based fallback report (no AI)
 //
 // Each report type produces a GENUINELY DISTINCT document — different
 // sections, different focus, different analysis structure. The shared
@@ -519,9 +519,9 @@ function buildFooter(): string[] {
   return [
     "---", "",
     "*This report was generated with CARTINT — Automotive Threat Intelligence Dashboard. "
-    + "Data collected from OSINT sources, processed through LLM-based automotive relevance "
+    + "Data collected from OSINT sources, processed through AI-based automotive relevance "
     + "classification (confidence ≥ 70%), and mapped to the Auto-ISAC Automotive Threat Matrix. "
-    + "Generation method: template (LLM fallback).*",
+    + "Generation method: template (AI fallback).*",
   ];
 }
 

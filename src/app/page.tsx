@@ -181,7 +181,7 @@ export default function Home() {
       setScraping(source ?? true);
       toast({
         title: source ? `Scraping ${source}…` : "Scraping all dark-web & OSINT sources…",
-        description: source ? undefined : "Running LLM automotive-relevance classification on every item.",
+        description: source ? undefined : "Running AI automotive-relevance classification on every item.",
       });
       try {
         const res = await fetch("/api/scrape", {
@@ -194,7 +194,7 @@ export default function Home() {
         if (!contentType.includes("application/json")) {
           throw new Error(
             res.status === 504 || res.status === 502
-              ? "Scrape timed out — the dark-web pipeline takes time (RansomLook API searches + LLM classification). Try again or wait for the auto-refresh."
+              ? "Scrape timed out — the dark-web pipeline takes time (RansomLook API searches + AI classification). Try again or wait for the auto-refresh."
               : `Server returned ${res.status} (expected JSON, got ${contentType})`
           );
         }
@@ -452,18 +452,18 @@ export default function Home() {
                   Multi-source dark-web monitoring
                   <span className="hidden items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 sm:inline-flex">
                     <Sparkles className="h-3 w-3" />
-                    Powered by LLM classification
+                    Powered by AI classification
                   </span>
                 </p>
                 <p className="text-[11px] text-slate-400">
-                  6 sources · Tor hidden-service search, ransomware leak sites, dark-web forum intel, security RSS, NVD automotive CVEs · LLM-classified for zero false positives
+                  6 sources · Tor hidden-service search, ransomware leak sites, dark-web forum intel, security RSS, NVD automotive CVEs · AI-classified for zero false positives
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
               <Stat icon={Radar} label="Sources" value={stats?.sourcesCount ?? 0} tone="text-fuchsia-300" />
               <div className="h-8 w-px bg-slate-700" />
-              <Stat icon={Activity} label="LLM-gated" value="100%" tone="text-emerald-300" />
+              <Stat icon={Activity} label="AI-gated" value="100%" tone="text-emerald-300" />
               <div className="h-8 w-px bg-slate-700" />
               <Stat icon={Globe} label="Countries" value={stats?.byCountry.length ?? 0} tone="text-cyan-300" />
             </div>
@@ -586,7 +586,7 @@ export default function Home() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <span>Dark-web OSINT · LLM-classified · Auto-ISAC ATM</span>
+            <span>Dark-web OSINT · AI-classified · Auto-ISAC ATM</span>
           </div>
         </div>
       </footer>

@@ -1,6 +1,6 @@
 // In-memory job store for CTI report generation.
 //
-// Reports are generated asynchronously (the LLM takes 30-90s). We can't use
+// Reports are generated asynchronously (the AI takes 30-90s). We can't use
 // streaming through the Caddy gateway because the browser disconnects
 // mid-stream. Instead:
 //   1. POST /api/cti-reports/generate starts a job, returns jobId immediately

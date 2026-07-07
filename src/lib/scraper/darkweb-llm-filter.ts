@@ -1,4 +1,4 @@
-// Dark-web LLM filter module — 3-step LLM pipeline (replaces Robin's llm.py).
+// Dark-web AI filter module — 3-step AI pipeline (replaces Robin's llm.py).
 //
 // Step 1 — Query Refinement: refine the user's search query into ≤5 words
 //          optimized for dark-web search engines.
@@ -8,7 +8,7 @@
 //          if it's a genuine automotive threat (not a false positive) with a
 //          confidence score, and extract structured data (actor, victim, etc.).
 //
-// Uses the z-ai-web-dev-sdk (the project's default LLM). For multi-model
+// Uses the z-ai-web-dev-sdk (the project's default AI). For multi-model
 // support (OpenAI/Anthropic/Gemini/Ollama), users can set the corresponding
 // env vars and the filter will use the configured provider.
 
@@ -97,7 +97,7 @@ export async function filterResults(
       .slice(0, maxResults)
       .map((i) => results[i]);
   } catch {
-    // If LLM fails, return the first maxResults
+    // If AI fails, return the first maxResults
     return results.slice(0, maxResults);
   }
 }

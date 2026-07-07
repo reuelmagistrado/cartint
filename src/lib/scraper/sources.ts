@@ -1,11 +1,11 @@
 // Dark-web & OSINT source adapters for CARTINT.
 //
 // Sources:
-//   1. darkweb                      — unified dark-web source: Robin-style Tor search (6 engines) + RansomLook leak-site monitoring. LLM-filtered for automotive only.
+//   1. darkweb                      — unified dark-web source: Robin-style Tor search (6 engines) + RansomLook leak-site monitoring. AI-filtered for automotive only.
 //   2. security-rss                 — BleepingComputer / HackerNews dark-web breach reporting
 //   3. asrg-advisories              — ASRG (Automotive Security Research Group) curated automotive CVEs
 //
-// Each adapter returns RawItem[]; the orchestrator runs them through the LLM
+// Each adapter returns RawItem[]; the orchestrator runs them through the AI
 // classifier (false-positive gate) before persisting anything.
 import type { RawItem } from "./classifier";
 
@@ -22,7 +22,7 @@ export const SOURCE_DEFS: SourceDef[] = [
     name: "darkweb",
     type: "darkweb",
     url: "tor://darkweb-search + ransomlook.io",
-    description: "Dark-web intelligence: Robin-style Tor search (6 .onion engines) + RansomLook leak-site monitoring with health checks. LLM-filtered for automotive relevance only. Requires Tor for .onion scraping.",
+    description: "Dark-web intelligence: Robin-style Tor search (6 .onion engines) + RansomLook leak-site monitoring with health checks. AI-filtered for automotive relevance only. Requires Tor for .onion scraping.",
     isDarkWeb: true,
   },
   {
@@ -131,11 +131,11 @@ function mentionsAutoRss(text: string): boolean {
 // ---- Source adapters --------------------------------------------------------
 
 // 1) darkweb — unified dark-web source (RansomLook + Robin-style Tor search).
-//    This adapter runs TWO sub-pipelines, both LLM-filtered for automotive only:
+//    This adapter runs TWO sub-pipelines, both AI-filtered for automotive only:
 //      a. RansomLook: search for automotive terms → health-check groups → return posts
-//      b. Robin-style: search 6 .onion engines via Tor → scrape → LLM classify (only if Tor available)
+//      b. Robin-style: search 6 .onion engines via Tor → scrape → AI classify (only if Tor available)
 //    Both return results under sourceName "darkweb".
-//    The orchestrator's LLM classifier does the final false-positive filtering.
+//    The orchestrator's AI classifier does the final false-positive filtering.
 export async function fetchDarkweb(): Promise<RawItem[]> {
   const items: RawItem[] = [];
   const seen = new Set<string>(); // dedup by externalId
@@ -181,7 +181,7 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
       }
     }
 
-    // Pre-filter with automotive keywords to reduce LLM calls.
+    // Pre-filter with automotive keywords to reduce AI calls.
     // Use a stricter check: require the keyword in the title or description
     // (not just the group name, which could be a false match).
     const autoPosts = dedupedPosts.filter((p) => {
@@ -229,7 +229,7 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
   }
 
   // ── Sub-pipeline B: Robin-style Tor search ───────────────────────────────
-  // Search 6 dark-web search engines via Tor, then LLM-filter.
+  // Search 6 dark-web search engines via Tor, then AI-filter.
   // Only runs if Tor is available (local deployment with Tor running).
   try {
     const { isTorAvailable } = await import("./tor");

@@ -103,7 +103,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
     setGenerating(true);
     setReport(null);
     setStreamProgress("");
-    toast({ title: "Generating CTI Report…", description: "The LLM is analyzing all threats in the selected time range. This takes 30-90s — the report will appear when complete." });
+    toast({ title: "Generating CTI Report…", description: "The AI is analyzing all threats in the selected time range. This takes 30-90s — the report will appear when complete." });
     try {
       const config: Record<string, unknown> = {
         type: reportType,
@@ -153,7 +153,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
       while (true) {
         const elapsed = Date.now() - startTime;
         if (elapsed > MAX_POLL_MS) {
-          throw new Error("Report generation timed out after 5 minutes. The LLM may be overloaded — please try again.");
+          throw new Error("Report generation timed out after 5 minutes. The AI may be overloaded — please try again.");
         }
 
         // Wait before polling
@@ -268,7 +268,7 @@ strong { color: #0f172a; }
 <div class="meta">Report ID: ${report.metadata.reportId} · ${report.metadata.date} · ${report.metadata.tlp} · Priority: ${report.metadata.priority}</div>
 </div>
 ${renderMarkdownToHtml(report.content)}
-<div class="footer">CARTINT — Dark-web OSINT · LLM-classified · Auto-ISAC ATM · Generated: ${report.generatedAt} · Method: ${report.method}</div>
+<div class="footer">CARTINT — Dark-web OSINT · AI-classified · Auto-ISAC ATM · Generated: ${report.generatedAt} · Method: ${report.method}</div>
 </body></html>`);
     w.document.close();
     setTimeout(() => { w.focus(); w.print(); }, 400);
@@ -540,7 +540,7 @@ ${renderMarkdownToHtml(report.content)}
                 </DialogTitle>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
                   <Badge variant="outline" className={`h-4 border px-1 text-[9px] ${report?.method === "llm" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
-                    {report?.method === "llm" ? "LLM" : "Template"}
+                    {report?.method === "llm" ? "AI" : "Template"}
                   </Badge>
                   <span><strong className="text-slate-300">ID:</strong> {report?.metadata.reportId}</span>
                   <span><strong className="text-slate-300">Date:</strong> {report?.metadata.date}</span>
@@ -598,7 +598,7 @@ ${renderMarkdownToHtml(report.content)}
   );
 }
 
-// Strip ```markdown ... ``` code fences that the LLM may wrap around the output
+// Strip ```markdown ... ``` code fences that the AI may wrap around the output
 function stripCodeFences(content: string): string {
   let cleaned = content.trim();
   // Remove leading ```markdown or ```md or ```

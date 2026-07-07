@@ -1,6 +1,6 @@
 // Content-filter error detection + heuristic automotive classifier fallback.
 //
-// The z-ai LLM occasionally rejects threat descriptions (ransomware claims,
+// The z-ai AI occasionally rejects threat descriptions (ransomware claims,
 // dark-web data sales, exploit kits) under its content-safety filter (HTTP 400,
 // error code 1301). When that happens we must NOT auto-reject the items as
 // false positives — that creates false negatives, the opposite of what CARTINT
@@ -23,7 +23,7 @@ export function isContentFilterError(err: unknown): boolean {
 }
 
 // Strong automotive signals — if any appear, the item is almost certainly
-// automotive-relevant and should surface even without LLM confirmation.
+// automotive-relevant and should surface even without AI confirmation.
 const STRONG_AUTO = [
   { re: /\b(oem|automaker|auto maker|car manufacturer|vehicle manufacturer)\b/i, cat: "OEM" },
   { re: /\btier[- ]?1\b/i, cat: "Tier-1 Supplier" },
@@ -132,8 +132,8 @@ export function heuristicClassify(item: RawItem): Classification {
     atmTechnique: atmTechnique && TECHNIQUE_NAMES.includes(atmTechnique) ? atmTechnique : undefined,
     severity,
     classificationReason: isAutomotive
-      ? "Heuristic fallback (LLM content-filter): automotive keywords detected"
-      : "Heuristic fallback (LLM content-filter): insufficient automotive signal",
+      ? "Heuristic fallback (AI content-filter): automotive keywords detected"
+      : "Heuristic fallback (AI content-filter): insufficient automotive signal",
     title: item.title.slice(0, 200),
     description: item.description.slice(0, 1200),
     actor: item.actor,

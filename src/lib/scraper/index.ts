@@ -1,4 +1,4 @@
-// Scrape orchestrator: runs source adapters, classifies with the LLM,
+// Scrape orchestrator: runs source adapters, classifies with the AI,
 // persists threats (deduped by externalId), updates source status, and writes
 // ScrapeLog entries tracking accepted vs rejected (false-positive) counts.
 import { db } from "@/lib/db";
@@ -94,7 +94,7 @@ export async function scrapeSource(name: string): Promise<ScrapeResult> {
   let rejected = 0;
 
   if (items.length > 0) {
-    // Classify via LLM (false-positive gate).
+    // Classify via AI (false-positive gate).
     const classifications = await classifyBatch(items);
 
     for (const c of classifications) {

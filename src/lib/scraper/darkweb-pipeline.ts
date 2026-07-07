@@ -1,13 +1,13 @@
 // Dark-web scraper orchestrator — the full pipeline:
-//   1. Refine the user's search query via LLM
+//   1. Refine the user's search query via AI
 //   2. Search dark-web search engines via Tor (Ahmia, OnionLand, Tor66, etc.)
-//   3. Filter search results via LLM (top 20 most relevant)
+//   3. Filter search results via AI (top 20 most relevant)
 //   4. For each result URL that matches a known ransomware group:
 //      a. Check RansomLook /api/health/{group_name}
 //      b. If best_mirror exists and uptime_30d > 50%: scrape the mirror via Tor
 //      c. Else: skip and log "mirror down"
 //   5. For results not matching a known group: scrape directly via Tor
-//   6. For each scraped page: run LLM automotive relevance classification
+//   6. For each scraped page: run AI automotive relevance classification
 //   7. Accept only if: relevant AND not false positive AND confidence ≥ 70%
 //   8. Return accepted threats as RawItem[] for the orchestrator to persist
 
@@ -87,8 +87,8 @@ export async function runDarkwebPipeline(
     return { ok: true, query: userQuery, refinedQuery, searchResults: 0, filteredResults: 0, scrapedPages: 0, accepted: 0, rejected: 0, skippedMirrors: 0, threats: [], progress };
   }
 
-  // Step 3: Filter results via LLM (top 20 most relevant)
-  emit({ stage: "filtering", message: `Filtering ${searchResults.length} results via LLM...` });
+  // Step 3: Filter results via AI (top 20 most relevant)
+  emit({ stage: "filtering", message: `Filtering ${searchResults.length} results via AI...` });
   const filtered = await filterResults(searchResults, 20);
   emit({ stage: "filtering", message: `Selected ${filtered.length} relevant results`, filteredResults: filtered.length });
 
@@ -125,7 +125,7 @@ export async function runDarkwebPipeline(
     return { ok: true, query: userQuery, refinedQuery, searchResults: searchResults.length, filteredResults: filtered.length, scrapedPages: 0, accepted: 0, rejected: 0, skippedMirrors, threats: [], progress };
   }
 
-  // Step 6: LLM automotive relevance classification
+  // Step 6: AI automotive relevance classification
   emit({ stage: "classifying", message: `Classifying ${pageEntries.length} pages for automotive relevance...` });
   const classifications = await classifyBatch(
     pageEntries.map(([url, content]) => ({ url, content })),
@@ -163,7 +163,7 @@ export async function runDarkwebPipeline(
   };
 }
 
-// Convert an LLM classification result to a RawItem for the orchestrator.
+// Convert an AI classification result to a RawItem for the orchestrator.
 function classificationToRawItem(url: string, c: ClassificationResult): RawItem {
   return {
     externalId: `darkweb:${url}`,

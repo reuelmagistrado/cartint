@@ -15,8 +15,8 @@ export async function GET() {
   return NextResponse.json({ reports });
 }
 
-// Build a structured CTI report from the dataset WITHOUT calling the LLM.
-// Used as a fallback when the LLM rejects the threat data under its
+// Build a structured CTI report from the dataset WITHOUT calling the AI.
+// Used as a fallback when the AI rejects the threat data under its
 // content-safety filter (error code 1301) — common for dark-web threat text.
 function buildTemplateReport(
   period: string,
@@ -46,7 +46,7 @@ function buildTemplateReport(
   lines.push(`**Period:** ${period}  `);
   lines.push(`**Total accepted automotive threats:** ${total}  `);
   lines.push(`**Severity breakdown:** ${bySeverity.critical} critical / ${bySeverity.high} high / ${bySeverity.medium} medium / ${bySeverity.low} low  `);
-  lines.push(`**Generation method:** Structured template (LLM content-filter fallback)  `);
+  lines.push(`**Generation method:** Structured template (AI content-filter fallback)  `);
   lines.push("");
   lines.push("## Executive Summary");
   lines.push("");
@@ -123,7 +123,7 @@ function buildTemplateReport(
 
   lines.push("## Indicators & Sources");
   lines.push("");
-  lines.push(`Report generated from ${total} threats ingested across ${bySource.size} sources. Each threat retains its source URL and LLM classification confidence score in the CARTINT dashboard.`);
+  lines.push(`Report generated from ${total} threats ingested across ${bySource.size} sources. Each threat retains its source URL and AI classification confidence score in the CARTINT dashboard.`);
 
   const content = lines.join("\n");
   const summary =
@@ -132,7 +132,7 @@ function buildTemplateReport(
   return { content, summary };
 }
 
-// POST /api/reports — generate a new CTI report via the LLM.
+// POST /api/reports — generate a new CTI report via the AI.
 // Body: { title?, period? }  — period e.g. "2025-01" or "last-30-days"
 export async function POST(req: NextRequest) {
   await ensureSourcesSeeded();
@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
       const summaryMatch = content.match(/Executive Summary[\s\S]*?(?:\n#{1,3}|\n\n)/);
       summary = summaryMatch ? summaryMatch[0].replace(/^.*?\n/, "").trim().slice(0, 400) : content.slice(0, 400);
     } catch (llmErr) {
-      // If the LLM rejected the input under its content-safety filter (code 1301),
+      // If the AI rejected the input under its content-safety filter (code 1301),
       // fall back to a structured template report so the analyst still gets output.
       if (isContentFilterError(llmErr)) {
         const tpl = buildTemplateReport(period, threats);

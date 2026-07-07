@@ -49,7 +49,7 @@ export function ReportGenerator({ reports, onRefresh }: { reports: Report[]; onR
           <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
             <FileText className="h-4 w-4 text-emerald-400" /> CTI Report Generator
           </h3>
-          <p className="text-[11px] text-slate-400">LLM-generated cyber-threat-intelligence briefings from the live feed</p>
+          <p className="text-[11px] text-slate-400">AI-generated cyber-threat-intelligence briefings from the live feed</p>
         </div>
         <Button
           size="sm"
@@ -221,7 +221,7 @@ function renderReportHtml(report: Report): string {
   </div>
   ${body}
   <div class="footer">
-    CARTINT · Dark-web OSINT · LLM-classified · Auto-ISAC ATM · Confidential — for authorized analyst use only.
+    CARTINT · Dark-web OSINT · AI-classified · Auto-ISAC ATM · Confidential — for authorized analyst use only.
   </div>
 </body></html>`;
 }

@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "CARTINT — Automotive Threat Intelligence",
-  description: "CARTINT: Automotive threat intelligence dashboard with multi-source dark-web OSINT scraping, LLM automotive-relevance classification (zero false positives), and Auto-ISAC ATM matrix mapping.",
+  description: "CARTINT: Automotive threat intelligence dashboard with multi-source dark-web OSINT scraping, AI automotive-relevance classification (zero false positives), and Auto-ISAC ATM matrix mapping.",
   keywords: ["CARTINT", "automotive threat intelligence", "dark web", "OSINT", "Auto-ISAC", "ATM", "connected vehicle", "CTI"],
   authors: [{ name: "CARTINT" }],
   icons: {
@@ -23,13 +23,13 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "CARTINT — Automotive Threat Intelligence",
-    description: "Dark-web OSINT + LLM-classified automotive threat intelligence with Auto-ISAC ATM mapping.",
+    description: "Dark-web OSINT + AI-classified automotive threat intelligence with Auto-ISAC ATM mapping.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "CARTINT — Automotive Threat Intelligence",
-    description: "Dark-web OSINT + LLM-classified automotive threat intelligence.",
+    description: "Dark-web OSINT + AI-classified automotive threat intelligence.",
   },
 };
 

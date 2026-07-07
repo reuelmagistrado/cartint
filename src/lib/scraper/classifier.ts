@@ -1,5 +1,5 @@
-// LLM-powered automotive relevance classifier.
-// This is the FALSE-POSITIVE GATE: every scraped item is classified by the LLM
+// AI-powered automotive relevance classifier.
+// This is the FALSE-POSITIVE GATE: every scraped item is classified by the AI
 // as automotive-relevant or not, with a confidence score. Only items that are
 // automotive AND above the configured threshold are surfaced as real threats.
 import ZAI from "z-ai-web-dev-sdk";
@@ -32,7 +32,7 @@ export type Classification = {
   atmTechnique?: string;
   severity: "critical" | "high" | "medium" | "low";
   classificationReason: string;
-  // Refined fields the LLM may improve.
+  // Refined fields the AI may improve.
   title: string;
   description: string;
   actor?: string;
@@ -113,7 +113,7 @@ async function getZai() {
   return zaiPromise;
 }
 
-// Minimal deterministic pre-filter to avoid wasting LLM calls on obvious noise.
+// Minimal deterministic pre-filter to avoid wasting AI calls on obvious noise.
 const HARD_BLOCK = [
   /\bhospital\b/i, /\bclinic\b/i, /\bdental\b/i, /\bpharma\b/i,
   /\buniversit(y|ies)\b/i, /\bschool district\b/i,
@@ -174,7 +174,7 @@ export async function classifyBatch(items: RawItem[]): Promise<Classification[]>
             isAutomotive: false,
             relevanceScore: 0,
             severity: "low",
-            classificationReason: `LLM classification failed (non-content-filter): ${(err as Error).message}`.slice(0, 300),
+            classificationReason: `AI classification failed (non-content-filter): ${(err as Error).message}`.slice(0, 300),
             title: item.title,
             description: item.description,
             actor: item.actor,
