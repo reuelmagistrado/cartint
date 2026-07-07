@@ -760,3 +760,31 @@ Work Log:
 
 Stage Summary:
 - CTI report generation no longer triggers a 502 from the gateway. The server-side LLM timeout is now 12s (was 30s), so the total response (~13s) is well under the cloud sandbox gateway's ~30s limit. The comprehensive template report (all 13 CARTINT sections) is returned whenever the LLM is slow, so the analyst ALWAYS gets a usable report. Verified end-to-end through the Caddy gateway (port 81, the real user path) via both curl and agent-browser. The "Server returned 502 (non-JSON)" error is resolved.
+
+---
+Task ID: 34 (bug fix — footer blocks CTI report; convert report to modal)
+Agent: main (Z.ai Code)
+Task: Fix the sticky footer ("CARTINT — Automotive Threat Intelligence · 86 active threats · 8% false-positive rejection · cartint-dashboard · Dark-web OSINT · LLM-classified · Auto-ISAC ATM") overlapping/blocking the generated CTI report. User requested the report show in a modal or detailed pane.
+
+Work Log:
+- Diagnosed: in `cti-reports-tab.tsx`, the generated report rendered INLINE (replacing the form via a `showForm` ternary + `AnimatePresence`). Its `ScrollArea` used `max-h-[calc(100vh-220px)]` which didn't account for the sticky footer (`<footer className="mt-auto ...">` with `z-10` + `bg-[#070b12]/90 backdrop-blur`). When the report was tall, its bottom content sat behind the semi-transparent footer — visually "blocked".
+- Fix: converted the report from an inline view to a modal `Dialog` (radix/shadcn Dialog, which renders at `z-50`, above the footer's `z-10`). The form is now ALWAYS visible; the report opens as an overlay on top of everything (including the footer). Closing the modal returns the user to the form, so they can tweak settings and regenerate immediately.
+- Changes in `src/components/dashboard/cti-reports-tab.tsx`:
+  * Added Dialog imports (`Dialog, DialogContent, DialogHeader, DialogTitle`); removed unused `AnimatePresence` (kept `motion` for the form entrance) and `ChevronLeft` (was for the "New Report" back button, no longer needed).
+  * Removed the `showForm`/`setShowForm` state (no longer needed — form is always visible).
+  * Removed `setShowForm(false)` from `generate()` (form no longer hides).
+  * Removed the "Cancel" button from the form actions (the form doesn't get replaced, so Cancel was meaningless).
+  * Replaced the inline `<motion.div key="report">` block with a `<Dialog open={!!report} onOpenChange={(v) => !v && setReport(null)}>` containing a `DialogContent` with:
+    - `flex max-h-[90vh] min-h-0 flex-col overflow-hidden` — flex column bounded to 90% of viewport height (never exceeds the screen, never touches the footer).
+    - `DialogHeader` (shrink-0): title + Template/LLM badge + metadata chips (ID, Date, Priority, TLP, Reliability) + PDF/.md/.json export buttons (with `hidden sm:inline` labels for mobile).
+    - Body: `min-h-0 flex-1 overflow-y-auto` — native overflow-y-auto scrolls reliably within the flex-computed height (same pattern used in the threat-detail modal fix, Task 20). Contains the ReactMarkdown render with all the same component overrides (h1-h4, p, table, code, etc.).
+- Verification (agent-browser via Caddy :81):
+  * Opened `/` → CTI Reports tab → "Generate Report". After ~12s the report opened as a `dialog` element: `dialog "Weekly Threat Digest — 7d — Jul 7, 2026"` with the Template badge, Report Metadata table, threat list, methodology, etc.
+  * Confirmed the footer text ("cartint-dashboard", "active threats ·") does NOT appear in the accessibility tree while the modal is open — the modal (z-50) fully overlays the footer (z-10). No overlap, no blocking.
+  * Scrolled within the modal — bottom sections (Recommendations, Distribution, TLP Classification, Key Terminology, generation footer) are all reachable via the internal scrollbar.
+  * Clicked the modal's "Close" button → modal closed, the form ("Generate CTI Report" heading, REPORT TYPE, Weekly Threat Digest option) is still visible underneath. The footer reappeared ("active threats ·", "cartint-dashboard", "Dark-web OSINT · LLM-classified · Auto-ISAC ATM"), confirming the modal was an overlay, not a page replacement.
+  * No "Cancel" button in the form (removed as intended).
+- `bun run lint` clean; `tsc --noEmit` clean; no runtime errors in dev.log.
+
+Stage Summary:
+- The generated CTI report now opens in a modal Dialog (z-50) that overlays the sticky footer (z-10) instead of competing with it inline. The footer no longer blocks the report. The form stays visible underneath, so the analyst can close the modal and immediately tweak settings + regenerate. The modal is bounded to 90vh with an internal scrollbar (flex column + min-h-0 flex-1 overflow-y-auto), so the full report — including the bottom sections (Recommendations, Distribution, TLP Classification, Key Terminology) — is reachable by scrolling. Export buttons (PDF/.md/.json) live in the modal header. Verified end-to-end via agent-browser: generate → modal opens above footer → scroll to bottom → close → form still visible.

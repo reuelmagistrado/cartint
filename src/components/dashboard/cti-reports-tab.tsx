@@ -1,15 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
-  FileText, Loader2, FileDown, Printer, ChevronLeft, Settings2,
+  FileText, Loader2, FileDown, Printer, Settings2,
   Calendar, AlertTriangle, Shield, Globe, Users, Target,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -61,7 +67,6 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
   countries: string[];
 }) {
   const { toast } = useToast();
-  const [showForm, setShowForm] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [report, setReport] = useState<GeneratedReport | null>(null);
 
@@ -135,7 +140,6 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
       if (!res.ok || !json.ok) throw new Error(json.error || "Generation failed");
 
       setReport(json.report);
-      setShowForm(false);
       const methodNote = json.report.method === "template" ? " (template fallback — LLM busy)" : "";
       toast({ title: "CTI Report generated", description: json.report.title + methodNote });
     } catch (e) {
@@ -206,10 +210,8 @@ ${renderMarkdownToHtml(report.content)}
 
   return (
     <div className="space-y-4">
-      <AnimatePresence mode="wait">
-        {showForm ? (
-          <motion.div key="form" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Card className="border-slate-700/60 bg-slate-900/40 p-5">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+        <Card className="border-slate-700/60 bg-slate-900/40 p-5">
               <div className="mb-4 flex items-center gap-2">
                 <FileText className="h-5 w-5 text-emerald-400" />
                 <h2 className="text-base font-semibold text-slate-100">Generate CTI Report</h2>
@@ -439,9 +441,6 @@ ${renderMarkdownToHtml(report.content)}
 
               {/* Actions */}
               <div className="mt-5 flex justify-end gap-2">
-                <Button variant="outline" size="sm" className="border-slate-700 text-slate-400" onClick={() => { setShowForm(true); setReport(null); }}>
-                  Cancel
-                </Button>
                 <Button
                   size="sm"
                   onClick={generate}
@@ -453,80 +452,75 @@ ${renderMarkdownToHtml(report.content)}
                 </Button>
               </div>
             </Card>
-          </motion.div>
-        ) : (
-          <motion.div key="report" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            {report && (
-              <Card className="border-slate-700/60 bg-slate-900/40">
-                {/* Report header */}
-                <div className="flex items-center justify-between border-b border-slate-700/60 p-4">
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="ghost" className="h-7 text-slate-400" onClick={() => { setShowForm(true); setReport(null); }}>
-                      <ChevronLeft className="h-4 w-4" /> New Report
-                    </Button>
-                    <span className="text-xs font-semibold text-slate-100">{report.title}</span>
-                    <Badge variant="outline" className={`h-4 border px-1 text-[9px] ${report.method === "llm" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
-                      {report.method === "llm" ? "LLM" : "Template"}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={printReport}>
-                      <Printer className="h-3.5 w-3.5" /> PDF
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={exportMarkdown}>
-                      <FileDown className="h-3.5 w-3.5" /> .md
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={exportJson}>
-                      <FileDown className="h-3.5 w-3.5" /> .json
-                    </Button>
-                  </div>
-                </div>
+      </motion.div>
 
-                {/* Report metadata bar */}
-                <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 px-4 py-2 text-[10px] text-slate-500">
-                  <span><strong className="text-slate-300">ID:</strong> {report.metadata.reportId}</span>
-                  <span><strong className="text-slate-300">Date:</strong> {report.metadata.date}</span>
-                  <span><strong className="text-slate-300">Priority:</strong> {report.metadata.priority}</span>
-                  <span><strong className="text-slate-300">TLP:</strong> {report.metadata.tlp}</span>
-                  <span><strong className="text-slate-300">Reliability:</strong> {report.metadata.reliability}</span>
+      {/* Report viewer modal — overlays the footer (z-50) instead of
+          competing with it inline. The form stays available underneath so
+          the analyst can tweak settings and regenerate immediately. */}
+      <Dialog open={!!report} onOpenChange={(v) => !v && setReport(null)}>
+        <DialogContent className="flex max-h-[90vh] min-h-0 flex-col overflow-hidden border-slate-700 bg-slate-950 p-0 sm:max-w-4xl">
+          <DialogHeader className="shrink-0 space-y-0 border-b border-slate-800 p-4 pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <DialogTitle className="text-sm font-semibold leading-tight text-slate-50">
+                  {report?.title}
+                </DialogTitle>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
+                  <Badge variant="outline" className={`h-4 border px-1 text-[9px] ${report?.method === "llm" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
+                    {report?.method === "llm" ? "LLM" : "Template"}
+                  </Badge>
+                  <span><strong className="text-slate-300">ID:</strong> {report?.metadata.reportId}</span>
+                  <span><strong className="text-slate-300">Date:</strong> {report?.metadata.date}</span>
+                  <span><strong className="text-slate-300">Priority:</strong> {report?.metadata.priority}</span>
+                  <span><strong className="text-slate-300">TLP:</strong> {report?.metadata.tlp}</span>
+                  <span><strong className="text-slate-300">Reliability:</strong> {report?.metadata.reliability}</span>
                 </div>
-
-                {/* Report content */}
-                <ScrollArea className="max-h-[calc(100vh-220px)]">
-                  <div className="p-5">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        h1: ({ children }) => <h1 className="mt-5 mb-3 text-lg font-bold text-emerald-200">{children}</h1>,
-                        h2: ({ children }) => <h2 className="mt-5 mb-2 text-sm font-bold text-emerald-200 border-b border-slate-800 pb-1">{children}</h2>,
-                        h3: ({ children }) => <h3 className="mt-4 mb-1.5 text-[13px] font-semibold text-slate-100">{children}</h3>,
-                        h4: ({ children }) => <h4 className="mt-3 mb-1 text-[12px] font-semibold text-slate-200">{children}</h4>,
-                        p: ({ children }) => <p className="my-2 text-[13px] leading-relaxed text-slate-300">{children}</p>,
-                        strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
-                        em: ({ children }) => <em className="italic text-slate-400">{children}</em>,
-                        ul: ({ children }) => <ul className="my-2 ml-5 list-disc space-y-1">{children}</ul>,
-                        ol: ({ children }) => <ol className="my-2 ml-5 list-decimal space-y-1">{children}</ol>,
-                        li: ({ children }) => <li className="text-[13px] text-slate-300">{children}</li>,
-                        hr: () => <hr className="my-4 border-slate-800" />,
-                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300">{children}</a>,
-                        table: ({ children }) => <table className="my-3 w-full border-collapse text-xs">{children}</table>,
-                        thead: ({ children }) => <thead className="bg-slate-800/40">{children}</thead>,
-                        th: ({ children }) => <th className="border border-slate-700 px-2 py-1 text-left font-semibold text-slate-200">{children}</th>,
-                        td: ({ children }) => <td className="border border-slate-800 px-2 py-1 text-slate-400">{children}</td>,
-                        blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-emerald-500/40 pl-3 italic text-slate-400">{children}</blockquote>,
-                        code: ({ children }) => <code className="rounded bg-slate-800/60 px-1 py-0.5 font-mono text-[11px] text-emerald-300">{children}</code>,
-                        pre: ({ children }) => <pre className="my-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 overflow-x-auto">{children}</pre>,
-                      }}
-                    >
-                      {stripCodeFences(report.content)}
-                    </ReactMarkdown>
-                  </div>
-                </ScrollArea>
-              </Card>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={printReport} disabled={!report}>
+                  <Printer className="h-3.5 w-3.5" /> <span className="hidden sm:inline">PDF</span>
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={exportMarkdown} disabled={!report}>
+                  <FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">.md</span>
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 border-slate-700 text-slate-300 hover:bg-slate-800" onClick={exportJson} disabled={!report}>
+                  <FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">.json</span>
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="p-5">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({ children }) => <h1 className="mt-5 mb-3 text-lg font-bold text-emerald-200">{children}</h1>,
+                  h2: ({ children }) => <h2 className="mt-5 mb-2 text-sm font-bold text-emerald-200 border-b border-slate-800 pb-1">{children}</h2>,
+                  h3: ({ children }) => <h3 className="mt-4 mb-1.5 text-[13px] font-semibold text-slate-100">{children}</h3>,
+                  h4: ({ children }) => <h4 className="mt-3 mb-1 text-[12px] font-semibold text-slate-200">{children}</h4>,
+                  p: ({ children }) => <p className="my-2 text-[13px] leading-relaxed text-slate-300">{children}</p>,
+                  strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
+                  em: ({ children }) => <em className="italic text-slate-400">{children}</em>,
+                  ul: ({ children }) => <ul className="my-2 ml-5 list-disc space-y-1">{children}</ul>,
+                  ol: ({ children }) => <ol className="my-2 ml-5 list-decimal space-y-1">{children}</ol>,
+                  li: ({ children }) => <li className="text-[13px] text-slate-300">{children}</li>,
+                  hr: () => <hr className="my-4 border-slate-800" />,
+                  a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300">{children}</a>,
+                  table: ({ children }) => <table className="my-3 w-full border-collapse text-xs">{children}</table>,
+                  thead: ({ children }) => <thead className="bg-slate-800/40">{children}</thead>,
+                  th: ({ children }) => <th className="border border-slate-700 px-2 py-1 text-left font-semibold text-slate-200">{children}</th>,
+                  td: ({ children }) => <td className="border border-slate-800 px-2 py-1 text-slate-400">{children}</td>,
+                  blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-emerald-500/40 pl-3 italic text-slate-400">{children}</blockquote>,
+                  code: ({ children }) => <code className="rounded bg-slate-800/60 px-1 py-0.5 font-mono text-[11px] text-emerald-300">{children}</code>,
+                  pre: ({ children }) => <pre className="my-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 overflow-x-auto">{children}</pre>,
+                }}
+              >
+                {stripCodeFences(report?.content ?? "")}
+              </ReactMarkdown>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
