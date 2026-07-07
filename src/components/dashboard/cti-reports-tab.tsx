@@ -95,6 +95,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
 
   const generate = async () => {
     setGenerating(true);
+    toast({ title: "Generating CTI Report…", description: "The LLM is composing a structured report. This typically takes 60-90 seconds." });
     try {
       const config: Record<string, unknown> = {
         type: reportType,
@@ -118,6 +119,7 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
+        signal: AbortSignal.timeout(180000), // 3 minutes — LLM report generation can take 60-90s
       });
       // Handle non-JSON responses (server timeout returns HTML error page)
       const contentType = res.headers.get("content-type") || "";
@@ -135,7 +137,12 @@ export function CtiReportsTab({ threats, actors, categories, countries }: {
       setShowForm(false);
       toast({ title: "CTI Report generated", description: json.report.title });
     } catch (e) {
-      toast({ title: "Report generation failed", description: (e as Error).message, variant: "destructive" });
+      const msg = (e as Error).message;
+      if (msg.includes("abort") || msg.includes("timeout") || msg.includes("Timeout")) {
+        toast({ title: "Report generation timed out", description: "The LLM took too long. Try fewer sections or a shorter time range.", variant: "destructive" });
+      } else {
+        toast({ title: "Report generation failed", description: msg, variant: "destructive" });
+      }
     } finally {
       setGenerating(false);
     }
