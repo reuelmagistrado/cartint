@@ -70,8 +70,15 @@ automotive assets:
 - Items with no automotive connection even if the word "car" appears incidentally
 - Items about "CAR" as an acronym (e.g. Central African Republic) — reject
 
-Be strict. Prefer false negatives over false positives. If the automotive connection
-is weak or incidental, set isAutomotive=false and a low score.
+Classification guidance:
+- If the victim organization is an automotive company (OEM, supplier, dealership, fleet,
+  charging, mobility, telematics, etc.), classify as automotive with score ≥ 80.
+- If the threat targets automotive systems (ECU, CAN bus, OTA, telematics, infotainment,
+  keyless entry, charging infrastructure), classify as automotive with score ≥ 85.
+- If the threat mentions vehicle brands (Toyota, Ford, Tesla, BMW, Suzuki, Indian Motorcycle,
+  Polaris, etc.) or vehicle components, classify as automotive with score ≥ 75.
+- Only reject if there is NO genuine automotive connection.
+- When in doubt, lean toward accepting automotive-relevant threats (score ≥ 70).
 
 Available Auto-ISAC ATM tactics and techniques:
 ${TACTIC_LIST}
@@ -107,7 +114,20 @@ Return ONLY a JSON array. One object per input item, in the same order. Schema:
 
 // (getZai helper removed — all AI calls now go through @/lib/ai-provider)
 
+// Sources that are inherently automotive — their items are auto-accepted
+// without AI classification (they're curated by automotive security orgs).
+// This prevents the AI from incorrectly rejecting genuine automotive CVEs.
+const TRUSTED_AUTOMOTIVE_SOURCES = new Set([
+  "asrg-advisories", // ASRG (Automotive Security Research Group) — all automotive by definition
+  "nvd-cve",         // NVD automotive CVEs — pre-filtered for vehicle/ECU/CAN
+]);
+
+export function isTrustedAutomotiveSource(sourceName: string): boolean {
+  return TRUSTED_AUTOMOTIVE_SOURCES.has(sourceName);
+}
+
 // Minimal deterministic pre-filter to avoid wasting AI calls on obvious noise.
+// Only applies to non-trusted sources (trusted sources skip this entirely).
 const HARD_BLOCK = [
   /\bhospital\b/i, /\bclinic\b/i, /\bdental\b/i, /\bpharma\b/i,
   /\buniversit(y|ies)\b/i, /\bschool district\b/i,
@@ -116,6 +136,9 @@ const HARD_BLOCK = [
 ];
 
 export function quickReject(item: RawItem): boolean {
+  // Trusted automotive sources are never quick-rejected
+  if (isTrustedAutomotiveSource(item.sourceName)) return false;
+
   const text = `${item.title} ${item.description} ${item.victimOrg ?? ""} ${item.victimSector ?? ""}`;
   const autoSignal = /\b(auto|automotive|vehicle|car|oem|tier-?\d|dealership|fleet|charging|ev |electric vehicle|telematics|connected car|ecU|can bus|ota update|sdv|infotainment)\b/i.test(text);
   if (autoSignal) return false;
@@ -127,7 +150,30 @@ export async function classifyBatch(items: RawItem[]): Promise<Classification[]>
 
   const toClassify: RawItem[] = [];
   const rejected: Classification[] = [];
+  const autoAccepted: Classification[] = [];
+
   for (const item of items) {
+    // Trusted automotive sources (ASRG, NVD automotive CVEs) are auto-accepted
+    // without AI classification — they're curated by automotive security orgs
+    // and are automotive by definition. This prevents the AI from incorrectly
+    // rejecting genuine automotive vulnerabilities.
+    if (isTrustedAutomotiveSource(item.sourceName)) {
+      autoAccepted.push({
+        externalId: item.externalId,
+        isAutomotive: true,
+        relevanceScore: 95,
+        severity: item.suggestedSeverity ?? "high",
+        classificationReason: `Trusted automotive source (${item.sourceName}) — auto-accepted`,
+        title: item.title,
+        description: item.description,
+        actor: item.actor,
+        victimOrg: item.victimOrg,
+        country: item.country,
+        dataTypes: item.dataTypes,
+      });
+      continue;
+    }
+
     if (quickReject(item)) {
       rejected.push({
         externalId: item.externalId,
@@ -165,7 +211,7 @@ export async function classifyBatch(items: RawItem[]): Promise<Classification[]>
     }
   }
 
-  return [...rejected, ...out];
+  return [...rejected, ...autoAccepted, ...out];
 }
 
 async function llmClassify(chunk: RawItem[]): Promise<Classification[]> {
