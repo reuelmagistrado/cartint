@@ -2,7 +2,7 @@
 // persists threats (deduped by externalId), updates source status, and writes
 // ScrapeLog entries tracking accepted vs rejected (false-positive) counts.
 import { db } from "@/lib/db";
-import { classifyBatch, type RawItem } from "./classifier";
+import { classifyBatch, isTrustedAutomotiveSource, type RawItem } from "./classifier";
 import { SOURCE_DEFS, runSource } from "./sources";
 
 // The automotive-relevance confidence threshold. Only items with
@@ -108,10 +108,26 @@ export async function scrapeSource(name: string): Promise<ScrapeResult> {
         c.isAutomotive && c.relevanceScore >= RELEVANCE_THRESHOLD;
 
       if (existing) {
-        // Item already in DB — count it based on its stored classification
-        // so the audit trail shows accurate accepted/rejected totals.
-        if (existing.isAutomotive && existing.relevanceScore >= RELEVANCE_THRESHOLD) accepted++;
-        else rejected++;
+        // Item already in DB. For trusted automotive sources, if the existing
+        // record was previously rejected (by the old AI classifier), UPDATE it
+        // to accepted — trusted sources are automotive by definition.
+        if (isTrustedAutomotiveSource(rawItem.sourceName) && isAccepted) {
+          if (!(existing.isAutomotive && existing.relevanceScore >= RELEVANCE_THRESHOLD)) {
+            await db.threat.update({
+              where: { id: existing.id },
+              data: {
+                isAutomotive: true,
+                relevanceScore: c.relevanceScore,
+                classificationReason: c.classificationReason,
+              },
+            });
+          }
+          accepted++;
+        } else if (existing.isAutomotive && existing.relevanceScore >= RELEVANCE_THRESHOLD) {
+          accepted++;
+        } else {
+          rejected++;
+        }
         continue;
       }
 
