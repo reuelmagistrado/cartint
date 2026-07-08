@@ -67,9 +67,9 @@ export function useThreatStream() {
       // scrape-completion notifications, polling latency is negligible.
       transports: ["polling"],
       reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 15000,
+      reconnectionAttempts: 5, // Don't flood console with CORS errors if service is down
+      reconnectionDelay: 5000,
+      reconnectionDelayMax: 30000,
       timeout: 10000,
     });
     socketRef.current = socket;

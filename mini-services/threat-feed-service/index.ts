@@ -41,10 +41,12 @@ const httpServer = createServer((req, res) => {
 const io = new Server(httpServer, {
   // Use socket.io's default engine path (/socket.io/) so the /notify and
   // /health HTTP routes on this same server are NOT intercepted by engine.io.
-  // Caddy forwards based on the XTransformPort query param, so the client
-  // still connects with io("/?XTransformPort=3003") — socket.io-client
-  // preserves that query across all its /socket.io/ transport requests.
-  cors: { origin: "*", methods: ["GET", "POST"] },
+  cors: {
+    origin: "*", // Allow connections from any origin (localhost:3000 → localhost:3003)
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
+    credentials: false,
+  },
   pingTimeout: 60000,
   pingInterval: 25000,
 });

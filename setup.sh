@@ -55,7 +55,21 @@ fi
 # ─── 2. Dependencies ─────────────────────────────────────────────────────────
 print_header "2/5  Installing dependencies"
 bun install
-print_ok "Dependencies installed"
+print_ok "Main dependencies installed"
+
+# Install mini-service dependencies (threat-feed-service needs socket.io)
+if [ -d "mini-services/threat-feed-service" ] && [ -f "mini-services/threat-feed-service/package.json" ]; then
+  cd mini-services/threat-feed-service
+  bun install 2>/dev/null
+  print_ok "threat-feed-service dependencies installed"
+  cd "$PROJECT_ROOT"
+fi
+if [ -d "mini-services/watchdog-scheduler" ] && [ -f "mini-services/watchdog-scheduler/package.json" ]; then
+  cd mini-services/watchdog-scheduler
+  bun install 2>/dev/null
+  print_ok "watchdog-scheduler dependencies installed"
+  cd "$PROJECT_ROOT"
+fi
 
 # ─── 3. Database ────────────────────────────────────────────────────────────
 print_header "3/5  Setting up database"
