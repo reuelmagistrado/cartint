@@ -38,8 +38,8 @@ Before you begin, ensure you have:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/reuelmagistrado/cartint-dashboard.git
-cd cartint-dashboard
+git clone https://github.com/reuelmagistrado/cartint.git
+cd cartint
 
 # 2. Run the setup script (installs dependencies, creates the database)
 bun run setup
@@ -385,7 +385,7 @@ bunx tsc --noEmit
 ### Project Structure
 
 ```
-cartint-dashboard/
+cartint/
 ├── src/
 │   ├── app/                    # Next.js App Router (pages + API routes)
 │   │   ├── api/                # API routes (stats, threats, scrape, reports, etc.)

@@ -40,6 +40,19 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning className="dark">
+      <head>
+        {/* Suppress uncaught JSON.parse errors from Socket.IO polling failures
+            (harmless — the dashboard works without real-time WebSocket) */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.addEventListener('unhandledrejection', function(e) {
+              if (e.reason && (e.reason.message || '').includes('JSON.parse')) {
+                e.preventDefault();
+              }
+            });`,
+          }}
+        />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#070b12] text-slate-200`}
       >
