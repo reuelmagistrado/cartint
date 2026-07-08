@@ -34,7 +34,6 @@ import { AtmMatrix } from "@/components/dashboard/atm-matrix";
 import { AtmMatrixView } from "@/components/dashboard/atm-matrix-view";
 import { CtiReportsTab } from "@/components/dashboard/cti-reports-tab";
 import { ThreatFeed, ThreatDetailDialog } from "@/components/dashboard/threat-feed";
-import { AuditPanel } from "@/components/dashboard/audit-panel";
 import { ActorSpotlight } from "@/components/dashboard/actor-spotlight";
 import { ScrapeHistoryChart } from "@/components/dashboard/scrape-history-chart";
 import { SeverityDonut } from "@/components/dashboard/severity-donut";
@@ -565,11 +564,6 @@ export default function Home() {
             />
             <SeverityDonut stats={stats} className="min-h-0 flex-1" />
           </div>
-        </div>
-
-        {/* Audit (CTI Report Generator moved to the CTI Reports tab) */}
-        <div className="grid grid-cols-1 gap-4">
-          <AuditPanel stats={stats} />
         </div>
         </div>
         )}
