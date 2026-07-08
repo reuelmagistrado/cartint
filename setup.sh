@@ -59,7 +59,20 @@ print_ok "Dependencies installed"
 
 # ─── 3. Database ────────────────────────────────────────────────────────────
 print_header "3/5  Setting up database"
-if [ ! -f "db/custom.db" ]; then
+
+# Create .env from .env.example if it doesn't exist (fresh clone)
+if [ ! -f ".env" ]; then
+  if [ -f ".env.example" ]; then
+    cp .env.example .env
+    print_ok "Created .env from .env.example"
+  else
+    # Fallback: create a minimal .env with just the database URL
+    echo "DATABASE_URL=file:./db/custom.db" > .env
+    print_ok "Created .env with default DATABASE_URL"
+  fi
+fi
+
+if [ ! -d "db" ]; then
   mkdir -p db
   print_ok "Created db/ directory"
 fi
