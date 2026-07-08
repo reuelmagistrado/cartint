@@ -15,16 +15,37 @@ import { Server } from "socket.io";
 
 const PORT = 3003;
 
+// Create the Socket.IO server FIRST, then attach the HTTP handler.
+// This ensures Socket.IO's engine handles /socket.io/ requests before
+// our custom routes intercept them.
+const io = new Server({
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
+    credentials: false,
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+
 const httpServer = createServer((req, res) => {
-  // CORS + JSON for the internal notify endpoint.
+  // Set CORS headers on all responses
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
     return;
   }
+
+  // Let Socket.IO handle its own requests
+  if (req.url?.startsWith("/socket.io/")) {
+    return; // Socket.IO engine will handle this
+  }
+
   if (req.method === "POST" && req.url === "/notify") {
     handleNotify(req, res);
     return;
@@ -38,18 +59,8 @@ const httpServer = createServer((req, res) => {
   res.end("not found");
 });
 
-const io = new Server(httpServer, {
-  // Use socket.io's default engine path (/socket.io/) so the /notify and
-  // /health HTTP routes on this same server are NOT intercepted by engine.io.
-  cors: {
-    origin: "*", // Allow connections from any origin (localhost:3000 → localhost:3003)
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type"],
-    credentials: false,
-  },
-  pingTimeout: 60000,
-  pingInterval: 25000,
-});
+// Attach the HTTP server to Socket.IO AFTER defining the request handler
+io.attach(httpServer);
 
 interface NotifyPayload {
   source?: string;
