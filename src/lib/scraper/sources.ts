@@ -310,16 +310,26 @@ export async function fetchSecurityRss(sourceName: string, feedUrl: string): Pro
  // than parsing a non-feed page.
  let xml = "";
  try {
- const res = await fetchWithTimeout(feedUrl);
+ const res = await fetchWithTimeout(feedUrl, {
+ headers: {
+ "User-Agent": "Mozilla/5.0 (compatible; CARTINT-OSINT/1.0)",
+ Accept: "application/rss+xml, application/xml, text/xml",
+ },
+ });
+ console.log(`[rss:${sourceName}] fetch status: ${res.status}`);
  if (res.ok) {
  const text = await res.text();
+ console.log(`[rss:${sourceName}] response size: ${text.length} chars`);
  // Check if it's valid XML (RSS/Atom) and not a Cloudflare challenge page
  if (text.includes("<item>") || text.includes("<entry>")) {
  xml = text;
+ console.log(`[rss:${sourceName}] valid RSS/Atom feed detected`);
+ } else {
+ console.warn(`[rss:${sourceName}] response is not a valid RSS feed (may be Cloudflare challenge)`);
  }
  }
- } catch {
- // direct fetch failed
+ } catch (err) {
+ console.error(`[rss:${sourceName}] fetch failed:`, err instanceof Error ? err.message : String(err));
  }
  if (!xml) return [];
 
@@ -409,10 +419,14 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
           Accept: "application/json",
         },
       });
-      if (!res.ok) break;
+      if (!res.ok) {
+        console.warn(`[asrg] API returned HTTP ${res.status}`);
+        break;
+      }
 
       const json = (await res.json()) as { docs?: Array<Record<string, unknown>>; totalPages?: number; hasNextPage?: boolean };
       totalPages = Math.max(1, Number(json.totalPages ?? totalPages) || 1);
+      console.log(`[asrg] Page ${page}: ${json.docs?.length ?? 0} advisories (totalPages=${totalPages})`);
       for (const doc of json.docs ?? []) {
         const cveId = typeof doc.cveId === "string" ? doc.cveId : null;
         const title = typeof doc.title === "string" ? doc.title : cveId ?? "ASRG advisory";
@@ -438,8 +452,12 @@ export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
       page++;
     } while (page <= totalPages && page <= 10);
 
-    if (items.length > 0) return items;
-  } catch {
+    if (items.length > 0) {
+      console.log(`[asrg] Fetched ${items.length} advisories total`);
+      return items;
+    }
+  } catch (err) {
+    console.error(`[asrg] API fetch failed:`, err instanceof Error ? err.message : String(err));
     // Fall back to the legacy HTML parser below.
   }
 
