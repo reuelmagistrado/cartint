@@ -14,10 +14,15 @@
 // Exposes a /health endpoint (port 3004) for observability.
 
 import { createServer } from "http";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const PORT = 3004;
-const PROJECT_ROOT = "/home/z/my-project";
-const NEXT_URL = "http://localhost:3000";
+// Resolve project root from this file's location (works on any machine)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
+const NEXT_URL = process.env.NEXT_URL || "http://localhost:3000";
 const HEALTH_INTERVAL_MS = 30_000;
 const SCHEDULE_INTERVAL_MS = 60_000;
 const MAX_FAILS = 3;

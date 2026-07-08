@@ -36,19 +36,38 @@ yarn-error.log*
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 local-*
-.claude
+
+# ─── CARTINT-specific ignores ─────────────────────────────────────────────────
+
+# AI provider config (contains API keys — never commit)
 .z-ai-config
+
+# SQLite database (local data — each user generates their own)
+/db/
+
+# Logs
 *.log
 dev.log
 dev.out.log
-test
-prompt
-
 server.log
-# Skills directory
+
+# Upload folder (session artifacts, not part of the source)
+/upload/
+
+# Download folder (session artifacts)
+/download/
+
+# Internal tooling
+.claude
+.zscripts
 /skills/
+
+# Caddyfile (sandbox-specific proxy config — not needed for local clones)
+Caddyfile
+
+# Mini-service logs
+/mini-services/*.log

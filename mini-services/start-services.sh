@@ -5,12 +5,15 @@
 # as detached background processes. Called by the system-status endpoint when
 # it detects the services are down (self-healing).
 #
-# Usage: bash /home/z/my-project/mini-services/start-services.sh
+# Usage: bash mini-services/start-services.sh
+# Works from any project root (uses script's own directory, not hardcoded paths).
 
 set -e
 
-MINI_SERVICES_DIR="/home/z/my-project/mini-services"
-LOG_DIR="/home/z/my-project/mini-services"
+# Resolve the script's directory (works on any machine)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MINI_SERVICES_DIR="$SCRIPT_DIR"
+LOG_DIR="$SCRIPT_DIR"
 
 # Start threat-feed-service (port 3003) if not already running
 if ! lsof -i:3003 -sTCP:LISTEN >/dev/null 2>&1; then

@@ -219,7 +219,8 @@ export async function notifyThreatStream(payload: {
   const totalRejected = payload.results.reduce((s, r) => s + (r.rejected || 0), 0);
   if (totalAccepted === 0 && totalRejected === 0) return;
   try {
-    await fetch("http://localhost:3003/notify", {
+    const feedServiceUrl = process.env.THREAT_FEED_URL || "http://localhost:3003";
+    await fetch(`${feedServiceUrl}/notify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

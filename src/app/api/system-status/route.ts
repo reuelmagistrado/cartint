@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { spawn } from "child_process";
+import path from "path";
 import { db } from "@/lib/db";
 import { ensureSourcesSeeded } from "@/lib/scraper";
 
@@ -30,13 +31,16 @@ function tryStartService(port: number): boolean {
   }
   startAttemptedAt[port] = now;
   try {
+    // Use process.cwd() so this works on any machine (not just /home/z/my-project)
+    const miniServicesDir = path.join(process.cwd(), "mini-services");
+    const startScript = path.join(miniServicesDir, "start-services.sh");
     const child = spawn(
       "bash",
-      ["/home/z/my-project/mini-services/start-services.sh"],
+      [startScript],
       {
         detached: true,
         stdio: "ignore",
-        cwd: "/home/z/my-project/mini-services",
+        cwd: miniServicesDir,
       },
     );
     child.unref(); // allow the parent (Next.js) to exit independently

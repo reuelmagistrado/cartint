@@ -50,11 +50,21 @@ export function useThreatStream() {
       return;
     }
 
-    const socket = io("/?XTransformPort=3003", {
-      // Polling-only: the websocket upgrade through the Caddy gateway can stall
-      // and leave the socket in a "connecting" limbo. Polling is plain HTTP and
-      // routes reliably through Caddy's XTransformPort forwarding. For
-      // infrequent scrape-completion notifications, polling latency is negligible.
+    // Auto-detect environment:
+    // - Behind Caddy proxy (cloud sandbox): use relative path with XTransformPort
+    // - Local development (git clone): connect directly to localhost:3003
+    const isLocalDev = typeof window !== "undefined"
+      && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+      && window.location.port === "3000";
+
+    const socketUrl = isLocalDev
+      ? "http://localhost:3003"  // Direct connection to the mini-service
+      : "/?XTransformPort=3003"; // Caddy proxy with port forwarding
+
+    const socket = io(socketUrl, {
+      // Polling-only: the websocket upgrade through proxies can stall.
+      // Polling is plain HTTP and routes reliably. For infrequent
+      // scrape-completion notifications, polling latency is negligible.
       transports: ["polling"],
       reconnection: true,
       reconnectionAttempts: Infinity,
