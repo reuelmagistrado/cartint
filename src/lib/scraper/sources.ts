@@ -76,6 +76,21 @@ async function readPage(url: string): Promise<string> {
  }
 }
 
+async function readRawPage(url: string): Promise<string> {
+  try {
+    const res = await fetchWithTimeout(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; CARTINT-OSINT/1.0)",
+        Accept: "text/html,application/xhtml+xml,application/xml,text/xml,*/*",
+      },
+    });
+    if (!res.ok) return "";
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+
 function stripHtml(html: string): string {
  return html
  .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
@@ -290,9 +305,9 @@ export async function fetchDarkweb(): Promise<RawItem[]> {
 
 // 3) Security RSS — generic parser used by bleepingcomputer & thehackernews.
 export async function fetchSecurityRss(sourceName: string, feedUrl: string): Promise<RawItem[]> {
- // Some feeds (e.g. BleepingComputer) are behind Cloudflare and return a
- // challenge page instead of XML when fetched directly. Use the z-ai
- // page_reader as a fallback if the direct fetch doesn't return valid XML.
+ // Some feeds may be behind Cloudflare and return a challenge page instead of
+ // XML when fetched directly. In that case this source returns empty rather
+ // than parsing a non-feed page.
  let xml = "";
  try {
  const res = await fetchWithTimeout(feedUrl);
@@ -305,14 +320,6 @@ export async function fetchSecurityRss(sourceName: string, feedUrl: string): Pro
  }
  } catch {
  // direct fetch failed
- }
- // Fallback: use page_reader (bypasses Cloudflare)
- if (!xml) {
- try {
- xml = await readPage(feedUrl);
- } catch {
- // page_reader also failed
- }
  }
  if (!xml) return [];
 
@@ -390,10 +397,55 @@ async function mapWithConcurrency<T, R>(arr: T[], fn: (item: T, index: number) =
 }
 
 export async function fetchAsrgAdvisories(): Promise<RawItem[]> {
- const items: RawItem[] = [];
- let cards: { href: string; inner: string }[] = [];
+  const items: RawItem[] = [];
+
+  try {
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const res = await fetchWithTimeout(`https://www.asrg.io/api/security-advisories?page=${page}&limit=100`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; CARTINT-OSINT/1.0)",
+          Accept: "application/json",
+        },
+      });
+      if (!res.ok) break;
+
+      const json = (await res.json()) as { docs?: Array<Record<string, unknown>>; totalPages?: number; hasNextPage?: boolean };
+      totalPages = Math.max(1, Number(json.totalPages ?? totalPages) || 1);
+      for (const doc of json.docs ?? []) {
+        const cveId = typeof doc.cveId === "string" ? doc.cveId : null;
+        const title = typeof doc.title === "string" ? doc.title : cveId ?? "ASRG advisory";
+        const description = typeof doc.description === "string" ? doc.description : title;
+        const affectedProducts = typeof doc.affectedProducts === "string" ? doc.affectedProducts : "";
+        const severity = typeof doc.severity === "string" ? doc.severity.toLowerCase() as RawItem["suggestedSeverity"] : undefined;
+        const slug = typeof doc.slug === "string" ? doc.slug : String(doc.id ?? title);
+        const publishedDate = typeof doc.publishedDate === "string" ? doc.publishedDate : new Date().toISOString();
+        items.push({
+          externalId: `asrg:${slug}`,
+          title: (cveId ? `${cveId} — ${title}` : title).slice(0, 200),
+          description: `${description}${affectedProducts ? ` Affected: ${affectedProducts}` : ""}`.slice(0, 1200),
+          sourceName: "asrg-advisories",
+          sourceType: "cve",
+          sourceUrl: `https://www.asrg.io/security-advisories/${slug}`,
+          attackDate: new Date(publishedDate).toISOString(),
+          dataTypes: "vulnerability",
+          suggestedSeverity: ["critical", "high", "medium", "low"].includes(String(severity)) ? severity : undefined,
+          rawJson: JSON.stringify({ cveId, severity, slug, publishedDate }).slice(0, 2000),
+        });
+      }
+      if (json.hasNextPage === false) break;
+      page++;
+    } while (page <= totalPages && page <= 10);
+
+    if (items.length > 0) return items;
+  } catch {
+    // Fall back to the legacy HTML parser below.
+  }
+
+  let cards: { href: string; inner: string }[] = [];
  try {
- const html = await readPage("https://www.asrg.io/security-advisories");
+  const html = await readRawPage("https://www.asrg.io/security-advisories");
  if (!html) return items;
  const cardRe = /<a[^>]*href="(\/security-advisories\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
  let match: RegExpExecArray | null;

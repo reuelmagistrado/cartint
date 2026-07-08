@@ -155,29 +155,13 @@ export async function classifyBatch(items: RawItem[]): Promise<Classification[]>
       const result = await llmClassify(chunk);
       out.push(...result);
     } catch (err) {
-      // Content-filter errors must NOT auto-reject items (that creates false
-      // negatives). Fall back to the deterministic heuristic classifier so
-      // legitimate automotive threats still surface. Only true network/infra
-      // errors mark items as unclassified.
-      if (isContentFilterError(err)) {
-        out.push(...heuristicClassifyBatch(chunk));
-      } else {
-        for (const item of chunk) {
-          out.push({
-            externalId: item.externalId,
-            isAutomotive: false,
-            relevanceScore: 0,
-            severity: "low",
-            classificationReason: `AI classification failed (non-content-filter): ${(err as Error).message}`.slice(0, 300),
-            title: item.title,
-            description: item.description,
-            actor: item.actor,
-            victimOrg: item.victimOrg,
-            country: item.country,
-            dataTypes: item.dataTypes,
-          });
-        }
-      }
+      // Never turn provider failures into rejected threats. A bad/misconfigured
+      // AI endpoint would otherwise make every scrape look empty. Fall back to
+      // deterministic automotive classification and record why it was used.
+      const reason = isContentFilterError(err)
+        ? "AI content-filter fallback"
+        : `AI provider fallback: ${(err as Error).message}`;
+      out.push(...heuristicClassifyBatch(chunk, reason));
     }
   }
 
