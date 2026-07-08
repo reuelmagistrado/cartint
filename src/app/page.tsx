@@ -43,6 +43,7 @@ import { WorldMap } from "@/components/dashboard/world-map";
 import { ScrapeSchedulePanel } from "@/components/dashboard/scrape-schedule-panel";
 import { SystemStatusPanel } from "@/components/dashboard/system-status-panel";
 import { ActorCompareDialog } from "@/components/dashboard/actor-compare-dialog";
+import { AiSetupRequired } from "@/components/dashboard/ai-setup-required";
 import type { Stats, SourceInfo, AtmTacticData, Threat } from "@/components/dashboard/types";
 
 const PAGE_SIZE = 12;
@@ -86,6 +87,15 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState<boolean | string>(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
+
+  // Check AI configuration on mount — block the dashboard until AI is set up
+  useEffect(() => {
+    fetch("/api/ai-settings")
+      .then((r) => r.json())
+      .then((data) => setAiConfigured(data.configured === true))
+      .catch(() => setAiConfigured(false));
+  }, []);
 
   const loadOverview = useCallback(async () => {
     const [s, src, a, f] = await Promise.all([
@@ -270,6 +280,22 @@ export default function Home() {
       },
     },
   ]);
+
+  // Show the AI setup screen if AI is not configured (blocking requirement)
+  if (aiConfigured === false) {
+    return <AiSetupRequired onConfigured={() => setAiConfigured(true)} />;
+  }
+
+  // While checking AI config status, show a loading state
+  if (aiConfigured === null) {
+    return (
+      <div className="dark flex min-h-screen items-center justify-center bg-[#070b12] text-slate-200">
+        <div className="flex items-center gap-2 text-sm text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading CARTINT...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="dark flex min-h-screen flex-col bg-[#070b12] text-slate-200">

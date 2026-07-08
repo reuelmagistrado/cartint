@@ -100,13 +100,14 @@ if [ "$AI_CONFIGURED" = false ]; then
 fi
 
 if [ "$AI_CONFIGURED" = false ]; then
-  print_warn "No AI provider configured."
+  print_err "AI provider NOT configured. AI is REQUIRED for CARTINT to function."
   echo ""
-  echo -e "  ${BOLD}CARTINT works without AI (heuristic fallback), but AI features are recommended:${NC}"
-  echo -e "    • AI threat classification (false-positive gate)"
-  echo -e "    • AI-generated CTI reports"
-  echo -e "    • AI IOC extraction"
-  echo -e "    • AI dark-web query refinement"
+  echo -e "  ${BOLD}CARTINT requires an AI provider for:${NC}"
+  echo -e "    • Threat classification (false-positive gate)"
+  echo -e "    • CTI report generation"
+  echo -e "    • IOC extraction"
+  echo -e "    • ATM mapping"
+  echo -e "    • Dark-web query refinement"
   echo ""
   echo -e "  ${BOLD}Option A: Z.AI (default, easiest)${NC}"
   echo -e "    Get an API key from ${CYAN}https://z.ai${NC}, then:"
@@ -114,9 +115,9 @@ if [ "$AI_CONFIGURED" = false ]; then
   echo -e '    {"baseUrl":"https://api.z.ai/api/v1","apiKey":"YOUR_KEY"}'
   echo -e "    EOF${NC}"
   echo ""
-  echo -e "  ${BOLD}Option B: OpenAI / Anthropic / Google${NC}"
-  echo -e "    Set in .env or environment:"
-  echo -e "    ${CYAN}AI_PROVIDER=openai${NC}  (or anthropic, google)"
+  echo -e "  ${BOLD}Option B: OpenAI / Anthropic / Google / Custom${NC}"
+  echo -e "    Set in .env:"
+  echo -e "    ${CYAN}AI_PROVIDER=openai${NC}  (or anthropic, google, custom)"
   echo -e "    ${CYAN}AI_API_KEY=sk-...${NC}"
   echo -e "    ${CYAN}AI_MODEL=gpt-4o${NC}  (optional)"
   echo ""
@@ -125,12 +126,11 @@ if [ "$AI_CONFIGURED" = false ]; then
   echo -e "    ${CYAN}ollama pull llama3.2${NC}"
   echo -e "    ${CYAN}AI_PROVIDER=ollama AI_BASE_URL=http://localhost:11434/v1${NC}"
   echo ""
-  echo -e "  ${BOLD}Option D: Configure via the Settings UI${NC}"
-  echo -e "    Start the app (${CYAN}bun run dev${NC}), open the CTI Reports tab,"
-  echo -e "    and use the AI Provider Settings panel."
+  echo -e "  ${BOLD}Option D: Configure via the in-app setup screen${NC}"
+  echo -e "    Start the app (${CYAN}bun run build && bun run start${NC}), and the"
+  echo -e "    setup screen will guide you through AI provider configuration."
   echo ""
-  echo -e "  You can also skip this step and configure later — the app runs with"
-  echo -e "  heuristic fallbacks (keyword-based classification + template reports)."
+  echo -e "  ${YELLOW}⚠  The dashboard will NOT load until an AI provider is configured.${NC}"
 fi
 
 # ─── 5. Tor (optional) ───────────────────────────────────────────────────────
@@ -153,8 +153,9 @@ fi
 # ─── Done ────────────────────────────────────────────────────────────────────
 print_header "Setup Complete"
 echo ""
-echo -e "  ${BOLD}Start the dashboard:${NC}"
-echo -e "    ${CYAN}bun run dev${NC}"
+echo -e "  ${BOLD}Build and start the dashboard:${NC}"
+echo -e "    ${CYAN}bun run build${NC}"
+echo -e "    ${CYAN}bun run start${NC}"
 echo -e "    Open ${CYAN}http://localhost:3000${NC}"
 echo ""
 echo -e "  ${BOLD}Mini-services (auto-started by the dashboard):${NC}"
@@ -162,6 +163,6 @@ echo -e "    • threat-feed-service (port 3003) — WebSocket live updates"
 echo -e "    • watchdog-scheduler (port 3004) — health monitoring + scheduled scrapes"
 echo ""
 if [ "$AI_CONFIGURED" = false ]; then
-  echo -e "  ${YELLOW}⚠  AI features are in fallback mode. Configure an AI provider for full functionality.${NC}"
+  echo -e "  ${RED}⚠  AI is NOT configured. The dashboard will show a setup screen on first load.${NC}"
   echo ""
 fi

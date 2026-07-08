@@ -22,26 +22,25 @@ cd cartint-dashboard
 # 2. Run setup (installs deps, creates DB, checks AI + Tor config)
 bun run setup
 
-# 3. Start the dashboard
-bun run dev
+# 3. Configure your AI provider (REQUIRED — see below)
+#    Create a .z-ai-config file OR set AI_PROVIDER + AI_API_KEY in .env
 
-# 4. Open http://localhost:3000
+# 4. Build and start the dashboard
+bun run build
+bun run start
+
+# 5. Open http://localhost:3000
 ```
 
 The dashboard starts empty — click **"Scrape All"** in the Intelligence Sources panel to fetch live automotive threats from all sources. Each scrape fetches real data from public APIs (RansomLook, BleepingComputer, The Hacker News, NVD CVEs), classifies it with AI, and populates the dashboard.
 
-### Production mode (no dev overlay, faster, recommended for daily use)
-
-```bash
-bun run build
-bun run start
-```
+> ⚠️ **AI configuration is required.** The dashboard will not function without an AI provider configured. See [AI Provider Configuration](#ai-provider-configuration) below.
 
 ---
 
 ## AI Provider Configuration
 
-CARTINT supports **5 AI providers**. You can configure via environment variables, config files, or the in-app Settings UI (CTI Reports tab → AI Provider Settings panel).
+CARTINT supports **6 AI providers**. You must configure one before starting the dashboard — AI is required for threat classification, report generation, and IOC extraction.
 
 ### Option A: Z.AI (default)
 
@@ -117,21 +116,19 @@ AI_MODEL=your-model-id
 
 ### Option G: In-App Settings UI
 
-Start the dashboard (`bun run dev`), go to the **CTI Reports** tab, and use the **AI Provider Settings** panel to select your provider and enter your API key. Settings are saved at runtime (no restart needed).
+Start the dashboard (`bun run build && bun run start`), go to the **CTI Reports** tab, and use the **AI Provider Settings** panel to select your provider and enter your API key. Settings are saved at runtime (no restart needed).
 
-### What works without AI?
+### AI is required
 
-If no AI provider is configured, CARTINT runs in **fallback mode** with graceful degradation:
+An AI provider must be configured before the dashboard will function. AI powers:
 
-| Feature | With AI | Without AI (fallback) |
-|---------|---------|----------------------|
-| Threat classification | AI-powered relevance + confidence scoring | Heuristic keyword-based classifier |
-| CTI report generation | AI-written natural-language analysis | Structured template report (all 13 sections, data-accurate) |
-| IOC extraction | AI-extracted CVEs, actors, data types | Regex-based extraction (CVEs, IPs, hashes, domains) |
-| Dark-web query refinement | AI-refined search queries | Uses raw search query |
-| ATM mapping | AI-refined tactic/technique mapping | Heuristic keyword-to-tactic mapping |
+- **Threat classification** — every scraped item is classified as automotive-relevant or not, with a confidence score
+- **CTI report generation** — AI-written natural-language analysis for all 6 report types
+- **IOC extraction** — AI-extracted CVEs, actors, data types, components
+- **Dark-web query refinement** — AI-refined search queries
+- **ATM mapping** — AI-mapped tactics/techniques with attacker-intent analysis
 
-**The dashboard fully works without AI** — you just get less nuanced analysis. Configure an AI provider for the full experience.
+Without AI, the dashboard shows a configuration screen prompting you to set up an AI provider.
 
 ---
 
@@ -286,8 +283,11 @@ bun install
 # Push database schema
 bun run db:push
 
-# Start dev server
-bun run dev
+# Build for production
+bun run build
+
+# Start the production server
+bun run start
 
 # Lint
 bun run lint
