@@ -9,22 +9,21 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, Settings2, CheckCircle2, AlertCircle, ExternalLink } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-type Provider = "zai" | "openai" | "anthropic" | "google" | "ollama" | "custom";
+type Provider = "openai" | "anthropic" | "google" | "ollama" | "custom";
 
 const PROVIDERS: { value: Provider; label: string; helpUrl: string; needsKey: boolean; defaultModel: string; defaultBaseUrl: string }[] = [
-  { value: "zai", label: "Z.AI (default)", helpUrl: "https://z.ai", needsKey: true, defaultModel: "", defaultBaseUrl: "" },
   { value: "openai", label: "OpenAI", helpUrl: "https://platform.openai.com/api-keys", needsKey: true, defaultModel: "gpt-4o", defaultBaseUrl: "https://api.openai.com/v1" },
   { value: "anthropic", label: "Anthropic Claude", helpUrl: "https://console.anthropic.com/settings/keys", needsKey: true, defaultModel: "claude-sonnet-4-20250514", defaultBaseUrl: "https://api.anthropic.com/v1" },
   { value: "google", label: "Google Gemini", helpUrl: "https://aistudio.google.com/apikey", needsKey: true, defaultModel: "gemini-2.0-flash", defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
   { value: "ollama", label: "Ollama (local, free)", helpUrl: "https://ollama.com/download", needsKey: false, defaultModel: "llama3.2", defaultBaseUrl: "http://localhost:11434/v1" },
-  { value: "custom", label: "OpenAI Compatible (custom)", helpUrl: "", needsKey: true, defaultModel: "", defaultBaseUrl: "" },
+  { value: "custom", label: "OpenAI Compatible (custom)", helpUrl: "", needsKey: false, defaultModel: "", defaultBaseUrl: "" },
 ];
 
 export function AiSettingsPanel() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [provider, setProvider] = useState<Provider>("zai");
+  const [provider, setProvider] = useState<Provider>("custom");
   const [apiKey, setApiKey] = useState("");
   const [apiKeySet, setApiKeySet] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
@@ -35,7 +34,7 @@ export function AiSettingsPanel() {
     fetch("/api/ai-settings")
       .then((r) => r.json())
       .then((data) => {
-        setProvider(data.provider || "zai");
+        setProvider(data.provider || "custom");
         setApiKeySet(data.apiKeySet || false);
         setApiKey("");
         setBaseUrl(data.baseUrl || "");
@@ -121,10 +120,10 @@ export function AiSettingsPanel() {
           </div>
 
           {/* API Key */}
-          {currentProvider.needsKey && (
+          {(currentProvider.needsKey || provider === "custom") && (
             <div>
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                API Key {apiKeySet && <span className="text-emerald-400">(set — enter new to replace)</span>}
+                API Key {provider === "custom" && <span className="text-slate-500">(optional)</span>} {apiKeySet && <span className="text-emerald-400">(set — enter new to replace)</span>}
               </label>
               <input
                 type="password"
@@ -134,7 +133,7 @@ export function AiSettingsPanel() {
                 className="h-8 w-full rounded border border-slate-700 bg-slate-900/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
               />
               <p className="mt-1 text-[10px] text-slate-500">
-                This key is stored locally and only used to make API requests from this dashboard.
+                  This key is stored locally in <code>db/ai-settings.json</code> and only used to make API requests from this dashboard.
               </p>
               {currentProvider.helpUrl && (
                 <a
@@ -150,49 +149,34 @@ export function AiSettingsPanel() {
           )}
 
           {/* Base URL */}
-          {provider !== "zai" && (
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Base URL</label>
-              <input
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder={currentProvider.defaultBaseUrl || "https://your-provider.com/v1"}
-                className="h-8 w-full rounded border border-slate-700 bg-slate-900/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
-              />
-            </div>
-          )}
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Base URL</label>
+            <input
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder={currentProvider.defaultBaseUrl || "https://your-provider.com/v1"}
+              className="h-8 w-full rounded border border-slate-700 bg-slate-900/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
+            />
+          </div>
 
           {/* Model */}
-          {provider !== "zai" && (
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Model ID</label>
-              <input
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder={currentProvider.defaultModel || "e.g. gpt-4o, glm-4.6, llama3.2"}
-                className="h-8 w-full rounded border border-slate-700 bg-slate-900/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
-              />
-            </div>
-          )}
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Model ID</label>
+            <input
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={currentProvider.defaultModel || "e.g. gpt-4o, llama3.2"}
+              className="h-8 w-full rounded border border-slate-700 bg-slate-900/60 px-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
+            />
+          </div>
 
           {/* Custom provider note */}
           {provider === "custom" && (
             <div className="rounded border border-cyan-500/30 bg-cyan-500/5 p-2 text-[11px] text-cyan-300/80">
               Connect to any OpenAI-compatible API endpoint (Azure OpenAI, Together AI, Anyscale,
-              vLLM, LM Studio, etc.). Enter the Base URL, your API key, and the model ID your
-              provider supports.
-            </div>
-          )}
-
-          {/* Z.AI note */}
-          {provider === "zai" && (
-            <div className="rounded border border-slate-700/60 bg-slate-800/40 p-2 text-[11px] text-slate-400">
-              Z.AI uses a <code className="text-emerald-300">.z-ai-config</code> file in the project root or home directory.
-              Create it with: <code className="text-cyan-300">{`{"baseUrl":"https://api.z.ai/api/v1","apiKey":"your-key"}`}</code>
-              <br />
-              <a href="https://z.ai" target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-[10px] text-cyan-400 hover:text-cyan-300">
-                Get a Z.AI API key <ExternalLink className="h-2.5 w-2.5" />
-              </a>
+              vLLM, LM Studio, etc.). Use the AI server URL, not this dashboard URL. Examples:
+              <code className="mx-1 text-emerald-300">http://localhost:1234/v1</code> for LM Studio or
+              <code className="mx-1 text-emerald-300">http://localhost:11434/v1</code> for Ollama.
             </div>
           )}
 
@@ -219,7 +203,7 @@ export function AiSettingsPanel() {
                 className="rounded border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-300"
               >
                 <AlertCircle className="mr-1 inline h-3 w-3" />
-                AI features disabled — using heuristic fallback. {provider === "zai" ? "Create a .z-ai-config file" : "Enter your API key"} for full functionality.
+                AI features disabled — using heuristic fallback. Enter your provider settings for full functionality.
               </motion.div>
             )}
           </AnimatePresence>

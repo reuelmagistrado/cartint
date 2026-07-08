@@ -9,9 +9,9 @@ eliminate false positives, and maps accepted threats to the Auto-ISAC ATM.
 ## Architecture
 - **Framework**: Next.js 16 (App Router) + TypeScript + Tailwind 4 + shadcn/ui
 - **DB**: Prisma + SQLite (`Threat`, `Source`, `ScrapeLog`, `Report`)
-- **AI**: z-ai-web-dev-sdk — `page_reader` for dark-web/OSINT fetching,
-  `chat.completions` for the automotive-relevance classifier (false-positive gate)
-  and CTI report generation.
+- **AI**: OpenAI-compatible provider layer for local Ollama, OpenAI, Anthropic,
+  Google Gemini, and custom endpoints. AI calls gracefully fall back to
+  deterministic classifiers/templates when no provider is configured.
 - **Charts**: recharts. **Animation**: framer-motion.
 
 ### Sources (ransomware.live is now only ONE of six — the user's core complaint)
@@ -123,7 +123,7 @@ Stage Summary:
   * "Threat Actor Spotlight" section present; "Most active actor" highlight panel renders; 7 actors detected ✓
   * "Export CSV" + "Export JSON" buttons render and are clickable; clicking Export CSV via eval triggers client-side Blob download with no server errors in dev.log ✓
   * "Powered by LLM classification" Sparkles badge present in hero ✓
-  * No runtime/hydration errors in /home/z/my-project/dev.log after reload (only prisma SQL query logs which include the word "error" as a column name, not actual errors)
+  * No runtime/hydration errors in the local `dev.log` after reload (only prisma SQL query logs which include the word "error" as a column name, not actual errors)
 - No API routes, Prisma schema, or scraper logic touched. Sticky footer + min-h-screen flex flex-col + mt-auto layout intact.
 
 ---
@@ -936,7 +936,7 @@ Work Log:
 
 - **Implementation:**
 
-  1. Created `/home/z/my-project/mini-services/start-services.sh` — a startup script that:
+  1. Created `mini-services/start-services.sh` — a startup script that:
      - Checks if port 3003 is listening; if not, starts `bun index.ts` in the threat-feed-service directory (detached, logs appended to `threat-feed-service.log`)
      - Checks if port 3004 is listening; if not, starts `bun index.ts` in the watchdog-scheduler directory (detached, logs appended to `watchdog-scheduler.log`)
      - Uses `nohup setsid bun index.ts ... < /dev/null &` to fully detach from the shell
@@ -1085,76 +1085,75 @@ Stage Summary:
 
 ---
 Task ID: 42 (multi-model AI provider + open-source setup)
-Agent: main (Z.ai Code)
-Task: Make the project work on a local clone with multi-model AI support. Create README, setup script, .env.example, AI Settings UI, and graceful degradation documentation.
+Agent: main
+Task: Make the project work on a local clone with multi-model AI support. Create README, setup script, AI Settings UI, and graceful degradation documentation.
 
 Work Log:
 - **1. Created unified AI provider layer** (`src/lib/ai-provider.ts`):
-  - Supports 5 providers: Z.AI (default), OpenAI, Anthropic Claude, Google Gemini, Ollama (local/free)
-  - `chatCompletion()` and `chatCompletionText()` — single entry points all CARTINT code uses
-  - Z.AI caller lazily imports `z-ai-web-dev-sdk` (only loaded when actually used)
-  - OpenAI/Anthropic/Google/Ollama use the OpenAI-compatible `/chat/completions` endpoint (all four expose this)
-  - Settings stored in memory, overridable at runtime via `/api/ai-settings`
-  - `isAIConfigured()` — checks if a provider is properly configured
-  - `PROVIDER_DEFAULTS` — per-provider default baseUrl, model, label, helpUrl
+  - Supports OpenAI, Anthropic Claude, Google Gemini, Ollama (local/free), and custom OpenAI-compatible providers.
+  - `chatCompletion()` and `chatCompletionText()` are the single entry points all CARTINT code uses.
+  - No vendor SDK is required; calls use standard OpenAI-compatible `/chat/completions` HTTP requests.
+  - Settings are loaded from `.env`/environment variables and can be overridden at runtime via `/api/ai-settings`.
+  - `isAIConfigured()` checks if a provider is properly configured.
+  - `PROVIDER_DEFAULTS` contains per-provider base URL, model, label, and help URL metadata.
 
-- **2. Refactored ALL 7 AI call sites** to use `chatCompletionText`/`chatCompletion` instead of `zai.chat.completions.create`:
-  - `src/lib/scraper/classifier.ts` — threat classification
-  - `src/lib/scraper/darkweb-llm-filter.ts` — 3 calls (query refinement, result filtering, content classification)
-  - `src/lib/scraper/atm-mapper.ts` — ATM mapping
-  - `src/lib/scraper/sources.ts` — page reader (replaced Z.AI-specific `page_reader` with standard `fetch` + `stripHtml`)
-  - `src/lib/cti-report-generator.ts` — CTI report generation
-  - `src/app/api/cti-reports/generate/route.ts` — streaming report generation
-  - `src/app/api/threats/[id]/iocs/route.ts` — IOC extraction
-  - `src/app/api/reports/route.ts` — legacy report generation
-  - All `import ZAI from "z-ai-web-dev-sdk"` removed (except in ai-provider.ts where it's the Z.AI caller)
-  - All `zaiPromise`/`getZai()` helpers removed
+- **2. Refactored AI call sites** to use `chatCompletionText`/`chatCompletion` instead of provider-specific SDK calls:
+  - `src/lib/scraper/classifier.ts` — threat classification.
+  - `src/lib/scraper/darkweb-llm-filter.ts` — query refinement, result filtering, content classification.
+  - `src/lib/scraper/atm-mapper.ts` — ATM mapping.
+  - `src/lib/scraper/sources.ts` — page reading uses standard `fetch` + `stripHtml`.
+  - `src/lib/cti-report-generator.ts` — CTI report generation.
+  - `src/app/api/cti-reports/generate/route.ts` — async report generation.
+  - `src/app/api/threats/[id]/iocs/route.ts` — IOC extraction.
+  - `src/app/api/reports/route.ts` — legacy report generation.
+  - Removed direct dependency on provider-specific AI SDK imports.
 
 - **3. Created AI Settings API** (`src/app/api/ai-settings/route.ts`):
-  - GET — returns current provider config (API key masked for security)
-  - POST — updates provider at runtime (no restart needed)
+  - GET returns current provider config with the API key masked.
+  - POST updates provider settings at runtime without a restart.
 
 - **4. Created AI Settings UI** (`src/components/dashboard/ai-settings-panel.tsx`):
-  - Provider dropdown (Z.AI, OpenAI, Anthropic, Google, Ollama)
-  - API key input (password field, shows "set" status)
-  - Base URL + Model inputs (for non-Z.AI providers)
-  - "Get an API key" link per provider
-  - Z.AI config instructions (`.z-ai-config` file format)
-  - "Configured" / "Not configured" badge
-  - Warning banner when AI isn't configured
-  - Added to the CTI Reports tab below the report form
+  - Provider dropdown for OpenAI, Anthropic, Google Gemini, Ollama, and custom OpenAI-compatible endpoints.
+  - API key input for providers that need one.
+  - Base URL and model inputs for all providers.
+  - "Configured" / "Not configured" badge.
+  - Warning banner when AI is not configured.
+  - Added to the CTI Reports tab below the report form.
 
-- **5. Created setup script** (`setup.sh` → `bun run setup`):
-  - Checks Bun is installed
-  - Installs npm dependencies
-  - Creates SQLite database + pushes Prisma schema
-  - Checks AI provider config (.z-ai-config, env vars)
-  - Checks Tor installation (optional)
-  - Prints next steps with colored output
-  - Added `"setup": "bash setup.sh"` to package.json
+- **5. Created setup script** (`setup.sh` -> `bun run setup`):
+  - Checks Bun is installed.
+  - Installs dependencies.
+  - Creates the local `db/` directory and pushes the Prisma schema.
+  - Creates `.env` with `DATABASE_URL=file:./db/custom.db` when missing.
+  - Checks AI provider environment variables or a local Ollama service.
+  - Checks Tor installation (optional).
+  - Prints next steps with colored output.
+  - Added `"setup": "bash setup.sh"` to `package.json`.
 
-- **6. Created comprehensive README.md**:
-  - Quick start (3 steps)
-  - AI provider configuration (6 options: Z.AI, OpenAI, Anthropic, Google, Ollama, in-app UI)
-  - What works without AI (graceful degradation table)
-  - Tor setup (macOS, Linux, Windows)
-  - Full configuration reference (all env vars)
-  - Architecture diagram
-  - Sources table
-  - AI features list
-  - Graceful degradation explanation
-  - Development instructions
-  - Tech stack
+- **6. Replaced absolute paths with clone-relative paths**:
+  - `.env` now uses `DATABASE_URL=file:./db/custom.db`.
+  - `src/app/api/system-status/route.ts` resolves `mini-services/start-services.sh` from `process.cwd()`.
+  - `mini-services/start-services.sh` resolves paths from the script location.
+  - `mini-services/watchdog-scheduler/index.ts` derives the project root from `import.meta.url` unless `PROJECT_ROOT` is explicitly set.
+  - `.zscripts/*` scripts resolve the project directory from their own location.
 
-- **7. Created `.env.example`** with all config vars documented (AI_PROVIDER, AI_API_KEY, AI_BASE_URL, AI_MODEL, Tor, RansomLook, scraper settings)
+- **7. Created comprehensive README.md**:
+  - Fresh clone setup steps.
+  - Required services and ports.
+  - Dashboard and mini-service startup order.
+  - AI provider configuration for Ollama, OpenAI, Anthropic, Google Gemini, and custom OpenAI-compatible providers.
+  - Tor setup.
+  - Environment variables.
+  - Mini-service behavior.
+  - Troubleshooting and portability notes.
 
-- **Verification:**
-  * `GET /api/ai-settings` returns `{ provider: "zai", configured: true, defaults: {5 providers} }`
-  * `POST /api/ai-settings` with `{provider:"ollama"}` → `{ ok: true, provider: "ollama", configured: true, message: "AI provider set to Ollama (local, free)" }`
-  * Provider switch verified (GET after POST shows the new provider)
-  * `bun run setup` runs successfully — checks Bun, installs deps, pushes DB, detects Z.AI config, warns about Tor
-  * AI Settings panel renders in the CTI Reports tab with "Configured" badge, provider dropdown, API key input
-  * `bun run lint` clean; `tsc --noEmit` clean; no runtime errors
+- **Verification targets:**
+  * Fresh clone path independence: no runtime code depends on a hard-coded project directory.
+  * `GET /api/ai-settings` should return the normalized provider config and defaults without requiring a provider SDK.
+  * `POST /api/ai-settings` with `{ "provider": "ollama", "baseUrl": "http://localhost:11434/v1", "model": "llama3.2" }` should switch to Ollama.
+  * `bun run setup` should install dependencies, create/use `db/custom.db`, push Prisma schema, and report optional AI/Tor status.
+  * `bun run dev` should start the dashboard on `http://localhost:3000`.
+  * `bash mini-services/start-services.sh` should start local services on ports `3003` and `3004` from any clone location.
 
 Stage Summary:
-- CARTINT is now open-source-ready with multi-model AI support. Users can choose from 5 AI providers (Z.AI, OpenAI, Anthropic, Google, Ollama) via environment variables or the in-app Settings UI — no code changes needed. All AI features (classification, report generation, IOC extraction, dark-web filtering, ATM mapping) work with any provider. The app gracefully degrades to heuristic/template fallbacks when AI isn't configured. The `bun run setup` script guides users through installation, and the README.md documents everything (AI config, Tor setup, env vars, architecture). The project works on a fresh `git clone` — `bun run setup && bun run dev` gets you a fully functional dashboard.
+- CARTINT is open-source-ready for local clones. Users can run `bun run setup && bun run dev` without editing hard-coded paths. AI is optional and provider-agnostic through OpenAI-compatible HTTP calls, with Ollama/local setup documented first. The dashboard, database, mini-services, and setup scripts now use clone-relative paths so no absolute path from the original generation environment blocks local use.

@@ -30,7 +30,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const provider = (body.provider as AIProvider) || "zai";
+    const provider = (body.provider as AIProvider) || "custom";
 
     if (!PROVIDER_DEFAULTS[provider]) {
       return NextResponse.json(
@@ -40,12 +40,35 @@ export async function POST(req: NextRequest) {
     }
 
     const defaults = PROVIDER_DEFAULTS[provider];
+    const current = getAISettings();
+    const incomingApiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
+    const keepExistingApiKey = current.provider === provider && !incomingApiKey;
     const newSettings = {
       provider,
-      apiKey: typeof body.apiKey === "string" ? body.apiKey : "",
-      baseUrl: body.baseUrl || defaults.baseUrl,
+      apiKey: incomingApiKey || (keepExistingApiKey ? current.apiKey : ""),
+      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl.trim() : defaults.baseUrl,
       model: body.model || defaults.model,
     };
+
+    if (newSettings.baseUrl) {
+      let parsed: URL;
+      try {
+        parsed = new URL(newSettings.baseUrl);
+      } catch {
+        return NextResponse.json(
+          { ok: false, error: "Base URL must be a full URL, for example http://localhost:1234/v1" },
+          { status: 400 },
+        );
+      }
+
+      const dashboardUrl = new URL(req.url);
+      if (parsed.origin === dashboardUrl.origin) {
+        return NextResponse.json(
+          { ok: false, error: "Base URL points to this CARTINT dashboard. Enter your AI server URL instead, such as http://localhost:1234/v1 for LM Studio or http://localhost:11434/v1 for Ollama." },
+          { status: 400 },
+        );
+      }
+    }
 
     setAISettings(newSettings);
 

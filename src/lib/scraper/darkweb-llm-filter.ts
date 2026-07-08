@@ -6,9 +6,8 @@
 // Step 3 — Automotive Relevance Classification: for each scraped page, determine
 // if it's a genuine automotive threat (not a false positive) with a
 // confidence score, and extract structured data (actor, victim, etc.).
-// Uses the z-ai-web-dev-sdk (the project's default AI). For multi-model
-// support (OpenAI/Anthropic/Gemini/Ollama), users can set the corresponding
-// env vars and the filter will use the configured provider.
+// Uses the unified OpenAI-compatible AI provider. If no provider is configured,
+// callers fall back to deterministic filtering.
 
 import { chatCompletionText } from "@/lib/ai-provider";
 import type { SearchResult } from "./darkweb-search";

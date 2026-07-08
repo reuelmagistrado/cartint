@@ -70,7 +70,7 @@ const TACTIC_KEYWORDS: { tactic: string; technique: string; re: RegExp }[] = [
 const TACTIC_NAMES = ATM_TACTICS.map((t) => t.name);
 const TECHNIQUE_NAMES = ATM_TACTICS.flatMap((t) => t.techniques.map((x) => x.name));
 
-export function heuristicClassify(item: RawItem): Classification {
+export function heuristicClassify(item: RawItem, reason = "Heuristic fallback"): Classification {
   const text = `${item.title} ${item.description} ${item.victimOrg ?? ""} ${item.victimSector ?? ""} ${item.dataTypes ?? ""}`;
 
   let score = 20; // baseline
@@ -132,8 +132,8 @@ export function heuristicClassify(item: RawItem): Classification {
     atmTechnique: atmTechnique && TECHNIQUE_NAMES.includes(atmTechnique) ? atmTechnique : undefined,
     severity,
     classificationReason: isAutomotive
-      ? "Heuristic fallback (AI content-filter): automotive keywords detected"
-      : "Heuristic fallback (AI content-filter): insufficient automotive signal",
+      ? `${reason}: automotive keywords detected`.slice(0, 300)
+      : `${reason}: insufficient automotive signal`.slice(0, 300),
     title: item.title.slice(0, 200),
     description: item.description.slice(0, 1200),
     actor: item.actor,
@@ -143,6 +143,6 @@ export function heuristicClassify(item: RawItem): Classification {
   };
 }
 
-export function heuristicClassifyBatch(items: RawItem[]): Classification[] {
-  return items.map(heuristicClassify);
+export function heuristicClassifyBatch(items: RawItem[], reason?: string): Classification[] {
+  return items.map((item) => heuristicClassify(item, reason));
 }

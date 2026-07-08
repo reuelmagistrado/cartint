@@ -1,16 +1,20 @@
-// Unified AI provider — supports Z.AI, OpenAI, Anthropic, Google, and Ollama.
+import fs from "fs";
+import path from "path";
+
+// Unified AI provider — supports OpenAI, Anthropic, Google, Ollama, and
+// custom OpenAI-compatible endpoints.
 //
 // All AI calls in CARTINT (threat classifier, CTI report generator, IOC
 // extractor, dark-web filter) go through this module instead of calling
-// z-ai-web-dev-sdk directly. This lets users choose their preferred AI
-// provider from the Settings panel without changing code.
+// provider-specific SDKs. This lets users choose their preferred AI provider
+// from the Settings panel without changing code or installing vendor SDKs.
 //
 // Provider config is stored in memory (loaded from .env / environment vars
 // at startup, overridable at runtime via /api/ai-settings). On a fresh
-// clone with no config, it falls back to the default Z.AI SDK which reads
-// .z-ai-config from the project/home dir.
+// clone with no config, AI calls throw quickly and callers fall back to
+// heuristic/template modes.
 
-export type AIProvider = "zai" | "openai" | "anthropic" | "google" | "ollama" | "custom";
+export type AIProvider = "openai" | "anthropic" | "google" | "ollama" | "custom";
 
 export type AISettings = {
   provider: AIProvider;
@@ -19,20 +23,52 @@ export type AISettings = {
   model: string; // e.g. "gpt-4o", "claude-sonnet-4-20250514", "gemini-2.0-flash", "llama3.2"
 };
 
+const SUPPORTED_PROVIDERS = ["openai", "anthropic", "google", "ollama", "custom"] as const;
+
+function normalizeProvider(provider: string | undefined): AIProvider {
+  return SUPPORTED_PROVIDERS.includes(provider as AIProvider) ? (provider as AIProvider) : "custom";
+}
+
+const SETTINGS_PATH = path.join(process.cwd(), "db", "ai-settings.json");
+
 // Default settings — derived from environment variables at startup.
 // This way users can configure via .env OR via the Settings UI at runtime.
 const DEFAULT_SETTINGS: AISettings = {
-  provider: (process.env.AI_PROVIDER as AIProvider) || "zai",
+  provider: normalizeProvider(process.env.AI_PROVIDER),
   apiKey: process.env.AI_API_KEY || "",
   baseUrl: process.env.AI_BASE_URL || "",
   model: process.env.AI_MODEL || "",
 };
 
+function loadPersistedSettings(): AISettings | null {
+  try {
+    if (!fs.existsSync(SETTINGS_PATH)) return null;
+    const raw = JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8")) as Partial<AISettings>;
+    return {
+      provider: normalizeProvider(raw.provider),
+      apiKey: typeof raw.apiKey === "string" ? raw.apiKey : "",
+      baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl : "",
+      model: typeof raw.model === "string" ? raw.model : "",
+    };
+  } catch (e) {
+    console.warn("[ai-provider] Failed to load persisted AI settings:", e);
+    return null;
+  }
+}
+
+function persistSettings(s: AISettings): void {
+  try {
+    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
+  } catch (e) {
+    console.warn("[ai-provider] Failed to persist AI settings:", e);
+  }
+}
+
 // In-memory settings (overridable at runtime via /api/ai-settings).
-// On a fresh clone with no env vars and no .z-ai-config, this stays as
-// provider="zai" with empty key — the Z.AI SDK will throw on call, and
-// callers fall back to heuristic/template modes.
-let settings: AISettings = { ...DEFAULT_SETTINGS };
+// On a fresh clone with no env vars this remains unconfigured; callers fall
+// back to heuristic/template modes.
+let settings: AISettings = loadPersistedSettings() ?? { ...DEFAULT_SETTINGS };
 
 // In-memory runtime override (set via /api/ai-settings POST).
 // When null, we use the env-derived defaults.
@@ -45,6 +81,7 @@ export function getAISettings(): AISettings {
 export function setAISettings(s: AISettings): void {
   runtimeOverride = { ...s };
   settings = { ...s };
+  persistSettings(settings);
   // Reset the cached client so the next call creates a new one with the
   // updated config.
   cachedClient = null;
@@ -52,31 +89,19 @@ export function setAISettings(s: AISettings): void {
 
 export function isAIConfigured(): boolean {
   const s = getAISettings();
-  if (s.provider === "zai") {
-    // Z.AI uses .z-ai-config file — assume configured (the SDK will throw
-    // if the file is missing, and callers handle that).
-    return true;
-  }
-  // Other providers need an API key (or for Ollama, just a baseUrl)
+  // Providers need an API key (or for Ollama, just a baseUrl)
   if (s.provider === "ollama") {
     return !!s.baseUrl;
   }
   if (s.provider === "custom") {
-    // Custom OpenAI-compatible providers need both baseUrl AND apiKey
-    return !!s.baseUrl && !!s.apiKey;
+    // Custom local endpoints such as LM Studio/vLLM may not require an API key.
+    return !!s.baseUrl && !!s.model;
   }
   return !!s.apiKey;
 }
 
 // Provider-specific defaults
 export const PROVIDER_DEFAULTS: Record<AIProvider, { baseUrl: string; model: string; label: string; needsKey: boolean; helpUrl: string }> = {
-  zai: {
-    baseUrl: "",
-    model: "",
-    label: "Z.AI (default)",
-    needsKey: true,
-    helpUrl: "https://z.ai",
-  },
   openai: {
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4o",
@@ -109,7 +134,7 @@ export const PROVIDER_DEFAULTS: Record<AIProvider, { baseUrl: string; model: str
     baseUrl: "",
     model: "",
     label: "OpenAI Compatible (custom)",
-    needsKey: true,
+    needsKey: false,
     helpUrl: "",
   },
 };
@@ -136,16 +161,6 @@ export type ChatCompletionResult = {
 // Cached clients
 let cachedClient: { settings: AISettings; call: (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> } | null = null;
 
-// Z.AI SDK is loaded lazily so it's only imported when actually used
-// (avoids requiring the package for users who only use OpenAI/etc.)
-let zaiSdkPromise: Promise<unknown> | null = null;
-async function getZaiSdk() {
-  if (!zaiSdkPromise) {
-    zaiSdkPromise = import("z-ai-web-dev-sdk").then((m) => m.default);
-  }
-  return zaiSdkPromise;
-}
-
 // Get the active AI client (creates/refreshes on settings change)
 async function getClient() {
   const s = getAISettings();
@@ -159,8 +174,6 @@ async function getClient() {
 // Create a caller function for the configured provider
 function createCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> {
   switch (s.provider) {
-    case "zai":
-      return createZaiCaller(s);
     case "openai":
     case "anthropic":
     case "google":
@@ -168,42 +181,22 @@ function createCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<C
     case "custom":
       return createOpenAiCompatibleCaller(s);
     default:
-      return createZaiCaller(s);
+      return createOpenAiCompatibleCaller(s);
   }
-}
-
-// Z.AI caller — uses the z-ai-web-dev-sdk (reads .z-ai-config)
-function createZaiCaller(_s: AISettings): (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> {
-  return async (opts: ChatCompletionOptions) => {
-    const ZAI = (await getZaiSdk()) as { create: () => Promise<unknown> };
-    const zai = await ZAI.create();
-    const result = await (zai as {
-      chat: {
-        completions: {
-          create: (body: Record<string, unknown>) => Promise<unknown>;
-        };
-      };
-    }).chat.completions.create({
-      messages: opts.messages,
-      stream: opts.stream ?? false,
-      thinking: opts.thinking ?? { type: "disabled" },
-      ...(opts.max_tokens ? { max_tokens: opts.max_tokens } : {}),
-    });
-
-    if (result instanceof ReadableStream) {
-      return { content: "", stream: result };
-    }
-    const json = result as { choices?: { message?: { content?: string } }[] };
-    return { content: json.choices?.[0]?.message?.content ?? "" };
-  };
 }
 
 // OpenAI-compatible caller — works for OpenAI, Anthropic (via openai compat),
 // Google Gemini (via openai compat), and Ollama (openai compat).
 // All four expose an OpenAI-compatible /chat/completions endpoint.
 function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptions) => Promise<ChatCompletionResult> {
-  const baseUrl = s.baseUrl || PROVIDER_DEFAULTS[s.provider].baseUrl;
+  const baseUrl = normalizeBaseUrl(s.baseUrl || PROVIDER_DEFAULTS[s.provider].baseUrl, s.provider);
   const model = s.model || PROVIDER_DEFAULTS[s.provider].model;
+
+  if (!baseUrl || !model) {
+    return async () => {
+      throw new Error("AI provider is not configured. Set AI_PROVIDER, AI_BASE_URL, AI_MODEL, and AI_API_KEY, or use Ollama/local fallback settings.");
+    };
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -224,7 +217,8 @@ function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptio
       ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
     };
 
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const endpoint = `${baseUrl}/chat/completions`;
+    const res = await fetch(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -233,7 +227,11 @@ function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptio
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      throw new Error(`AI provider (${s.provider}) returned ${res.status}: ${errText.slice(0, 200)}`);
+      const contentType = res.headers.get("content-type") || "";
+      if (res.status === 404 && contentType.includes("text/html")) {
+        throw new Error(`AI provider (${s.provider}) returned 404 HTML from ${endpoint}. The Base URL likely points to the CARTINT dashboard or another web app, not an OpenAI-compatible API. Use a provider URL such as http://localhost:1234/v1 for LM Studio, http://localhost:11434/v1 for Ollama, or your provider's /v1 endpoint.`);
+      }
+      throw new Error(`AI provider (${s.provider}) returned ${res.status} from ${endpoint}: ${errText.slice(0, 200)}`);
     }
 
     if (opts.stream && res.body) {
@@ -243,6 +241,30 @@ function createOpenAiCompatibleCaller(s: AISettings): (opts: ChatCompletionOptio
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     return { content: json.choices?.[0]?.message?.content ?? "" };
   };
+}
+
+function normalizeBaseUrl(rawBaseUrl: string, provider: AIProvider): string {
+  const trimmed = rawBaseUrl.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+
+  if (url.pathname.endsWith("/chat/completions")) {
+    url.pathname = url.pathname.replace(/\/chat\/completions$/, "");
+  }
+
+  // Most local OpenAI-compatible servers expose /v1. If users enter only the
+  // host (for example http://localhost:1234), make the common case work.
+  if ((provider === "custom" || provider === "ollama") && (url.pathname === "" || url.pathname === "/")) {
+    url.pathname = "/v1";
+  }
+
+  return url.toString().replace(/\/+$/, "");
 }
 
 // ---- Public API: the single entry point all CARTINT code uses ----
