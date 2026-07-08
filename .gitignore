@@ -71,3 +71,4 @@ Caddyfile
 
 # Mini-service logs
 /mini-services/*.log
+/tool-results/
